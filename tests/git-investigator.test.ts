@@ -17,7 +17,7 @@ describe("Git Investigator", () => {
     const agent = new GitInvestigatorAgent();
     expect(agent.id).toBe("git-investigator");
     expect(agent.name).toBe(GIT_INVESTIGATOR.name);
-    expect(agent.responsibility).toBe("Find commits/PRs that introduced the problem");
+    expect(agent.responsibility).toBe("Find when the bug appeared (git regression)");
   });
 
   it("ranks blame higher than recency", () => {
@@ -71,6 +71,11 @@ describe("Git Investigator", () => {
     expect(result.evidence.available).toBe(true);
     expect(result.introducing?.subject).toMatch(/unguarded item\.id/i);
     expect(result.evidence.blame[0]?.summary).toMatch(/unguarded item\.id/i);
+    expect(result.regression?.filesChanged.some((file) => file.endsWith("src/cart.js") || file.endsWith("cart.js"))).toBe(
+      true,
+    );
+    expect(result.regression?.confidence).toBeGreaterThan(0.7);
+    expect(result.regression?.commit.author).toBeTruthy();
   });
 });
 

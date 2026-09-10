@@ -27,7 +27,7 @@ describe("Root Cause Agent", () => {
     const agent = new RootCauseAgent();
     expect(agent.id).toBe("root-cause-agent");
     expect(agent.name).toBe(ROOT_CAUSE_AGENT.name);
-    expect(agent.responsibility).toBe("Build and rank possible causes");
+    expect(agent.responsibility).toBe("Build an evidence graph and rank possible causes");
   });
 
   it("ranks an unguarded null deref above the crash-site frame", () => {
@@ -57,6 +57,11 @@ describe("Root Cause Agent", () => {
     expect(ranked.leading?.kind).toBe("null-deref");
     expect(ranked.causes.some((cause) => cause.kind === "crash-site")).toBe(true);
     expect(ranked.confidence).toBeGreaterThan(0.5);
+    expect(ranked.graph.claim).toMatch(/null|undefined/i);
+    expect(ranked.graph.nodes.some((node) => node.kind === "crash")).toBe(true);
+    expect(ranked.graph.nodes.some((node) => /getPrimaryItemId|cart/i.test(node.label))).toBe(true);
+    expect(ranked.graph.supporting.some((check) => check.label === "Stack trace" && check.supports)).toBe(true);
+    expect(ranked.graph.contradicting).toEqual([]);
   });
 
   it("promotes a likely dependency issue over application-code hypotheses", () => {

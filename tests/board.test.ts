@@ -199,7 +199,36 @@ const report: DebuggingReport = {
     command: "npm test --silent",
     runner: "npm-test",
     relatedTests: [{ file: "src/cart.test.js", reason: "name-match for src/cart.js" }],
-    steps: ["Run `npm test --silent`.", "Confirm the crash at `src/cart.js:16` in getPrimaryItemId."],
+    steps: [
+      "Understand symptoms: TypeError at cart.js:16: Cannot read properties of undefined (reading 'id')",
+      "Create scenario: should handle null cart response",
+      "Run `npm test --silent`.",
+      "Confirm the crash at `src/cart.js:16` in getPrimaryItemId.",
+      "Capture the live failure output.",
+      "Compare with the reported failure — matched.",
+    ],
+    symptoms: {
+      summary: "TypeError at cart.js:16: Cannot read properties of undefined (reading 'id')",
+      errorType: "TypeError",
+      errorMessage: "Cannot read properties of undefined (reading 'id')",
+      crashSite: "src/cart.js:16",
+      language: "javascript",
+      signals: ["null-deref", "crash-function"],
+    },
+    scenario: {
+      title: "should handle null cart response",
+      setup: ["Start from crash site `src/cart.js:16` (getPrimaryItemId)."],
+      action: "Run `npm test --silent` (test-suite).",
+      expectedFailure: "TypeError: Cannot read properties of undefined (reading 'id')",
+    },
+    capturedFailure: {
+      type: "AssertionError",
+      message: "Expected NaN to equal 10",
+      excerpt: "NaN !== 10",
+    },
+    match: "matched",
+    matchDetail: "Captured failure matches the report (TypeError, cart.js).",
+    confidence: 0.92,
     summary: "Issue reproduced via `npm test --silent` (test-suite).",
     handoff: ["Failure is live: Reproduced: `npm test --silent` failed with exit 1."],
   },
@@ -222,6 +251,24 @@ const report: DebuggingReport = {
     },
     confidence: 0.82,
     affectedFiles: ["src/cart.js"],
+    graph: {
+      claim: "Null/undefined dereference",
+      confidence: 0.82,
+      nodes: [
+        { id: "crash", kind: "crash", label: "TypeError", detail: "Cannot read properties of undefined (reading 'id')" },
+        { id: "function", kind: "function", label: "getPrimaryItemId", detail: "src/cart.js:16" },
+        { id: "null-value", kind: "null-value", label: "null value" },
+      ],
+      supporting: [
+        { id: "stack-trace", label: "Stack trace", present: true, supports: true, detail: "src/cart.js:16" },
+        { id: "source-code", label: "Source code", present: true, supports: true, detail: "return order.item.id;" },
+        { id: "null-value", label: "Null/undefined value", present: true, supports: true, detail: "undefined (reading 'id')" },
+        { id: "git-commit", label: "Git commit", present: false, supports: false, detail: "No introducing commit identified." },
+        { id: "reproduction", label: "Reproduction", present: true, supports: true, detail: "Reproduced locally." },
+      ],
+      contradicting: [],
+      summary: "Null/undefined dereference (82%) via TypeError → getPrimaryItemId → null value.",
+    },
     summary: "Leading cause H1 (82%): Null/undefined value reached a dereference.",
     handoff: ["Investigate H1 (null-deref) first."],
   },
@@ -314,7 +361,10 @@ describe("investigation board", () => {
     expect(html).toContain("Git Investigator");
     expect(html).toContain("Dependency Analyst");
     expect(html).toContain("Reproduction Agent");
+    expect(html).toContain("match");
     expect(html).toContain("Root Cause Agent");
+    expect(html).toContain("Evidence graph");
+    expect(html).toContain("Contradicting evidence");
     expect(html).toContain("Fix Agent");
     expect(html).toContain("Test Agent");
     expect(html).toContain("Validation Agent");

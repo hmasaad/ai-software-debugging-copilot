@@ -1,3 +1,4 @@
+import { buildEvidenceGraph } from "../analysis/evidence-graph.js";
 import { clamp } from "../exec.js";
 import type {
   AgentRun,
@@ -95,7 +96,7 @@ export function rankCauses(input: {
 
   const topFile = crashSite?.file;
   const related = input.reproduction?.relatedTests.length ?? 0;
-  if (topFile && related === 0 && input.reproduction) {
+  if (topFile && related === 0 && input.reproduction && !input.reproduction.generatedTest) {
     raw.push({
       kind: "untested",
       description: `No related tests found for ${topFile}. The path may be untested.`,
@@ -115,10 +116,12 @@ export function rankCauses(input: {
     ...input.logAnalysis.error.frames.filter((frame) => frame.inProject).map((frame) => frame.file),
     ...(input.codeInvestigation?.trace.map((step) => step.file) ?? []),
   ]).slice(0, 6);
-  const summary = buildCauseSummary(leading, causes, confidence);
+  const graph = buildEvidenceGraph({ ...input, leading, confidence });
+  const summary = buildCauseSummary(leading, causes, graph.confidence);
   const handoff = buildCauseHandoff(leading, causes, input.reproduction);
+  if (graph.summary) handoff.unshift(`Evidence graph: ${graph.claim} (${Math.round(graph.confidence * 100)}%).`);
 
-  return { causes, leading, confidence, affectedFiles, summary, handoff };
+  return { causes, leading, confidence: graph.confidence, affectedFiles, graph, summary, handoff };
 }
 
 function crashSiteCause(
@@ -139,7 +142,7 @@ function crashSiteCause(
 
 function nullDerefCause(log: LogAnalysis, code: CodeInvestigation | undefined): Omit<RankedCause, "id"> | undefined {
   const msg = log.error.message.toLowerCase();
-  if (!/undefined|null|nil|none/.test(msg)) return undefined;
+  if (!/undefined|null|nil|none|\bnan\b/.test(msg)) return undefined;
   const unguarded = code?.trace.some((step) => /unguarded/i.test(step.note));
   return {
     kind: "null-deref",
@@ -185,9 +188,10 @@ function environmentCause(log: LogAnalysis): Omit<RankedCause, "id"> | undefined
 function scoreConfidence(leading: RankedCause | undefined, input: Parameters<typeof rankCauses>[0]): number {
   let confidence = leading?.likelihood ?? 0.35;
   if (input.reproduction?.result.reproduced) confidence += 0.08;
+  if (input.reproduction?.match === "matched") confidence += 0.12;
   if (input.gitInvestigation?.introducing) confidence += 0.04;
   if (input.codeInvestigation?.trace.some((step) => step.role === "crash-site")) confidence += 0.04;
-  return clamp(confidence, 0.05, 0.9);
+  return clamp(confidence, 0.05, 0.96);
 }
 
 function buildCauseSummary(leading: RankedCause | undefined, causes: RankedCause[], confidence: number): string {
@@ -209,7 +213,9 @@ function buildCauseHandoff(
   if (leading?.kind === "dependency") {
     notes.push("Do not patch application code until the install/version hypothesis is ruled out.");
   }
-  if (reproduction?.steps[0]) notes.push(reproduction.steps[0]);
+  if (reproduction?.result.reproduced && reproduction.match === "matched") {
+    notes.push(`Reproduction matched the report (${Math.round(reproduction.confidence * 100)}%).`);
+  } else if (reproduction?.steps[0]) notes.push(reproduction.steps[0]);
   const second = causes[1];
   if (second) notes.push(`If ${leading?.id} is wrong, try ${second.id} (${second.kind}).`);
   return notes;

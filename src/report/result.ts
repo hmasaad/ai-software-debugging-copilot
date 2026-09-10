@@ -1,10 +1,14 @@
+import path from "node:path";
 import type { DebuggingReport, IncidentSeverity } from "../types.js";
 
 const INNER = 38;
 
 export function renderDebugResult(report: DebuggingReport): string {
+  const graph = report.causeAnalysis.graph;
   const severity = displaySeverity(report.incidentReport.severity);
-  const confidence = Math.round(Math.max(report.rootCause.confidence, report.causeAnalysis.confidence) * 100);
+  const confidence = Math.round((graph?.confidence ?? Math.max(report.rootCause.confidence, report.causeAnalysis.confidence)) * 100);
+  const supporting = graph?.supporting ?? [];
+  const contradicting = graph?.contradicting ?? [];
 
   const lines: string[] = [
     "DEBUGGING RESULT",
@@ -13,17 +17,30 @@ export function renderDebugResult(report: DebuggingReport): string {
     `Confidence: ${confidence}%`,
     "",
     "Root Cause:",
-    ...wrap(report.rootCause.rootCause || report.causeAnalysis.summary),
+    ...wrap(graph?.claim || report.rootCause.rootCause || report.causeAnalysis.summary),
     "",
     "Introduced:",
     ...wrap(introducedLine(report)),
     "",
+    ...(report.iterations.length
+      ? ["Attempts:", ...report.iterations.map((iteration) => iteration.summary), ""]
+      : []),
     "Reproduction:",
     report.reproduction.reproduced
-      ? "✓ Reproduced locally"
+      ? report.reproductionAnalysis.match === "matched"
+        ? "✓ Reproduced locally"
+        : "✓ Failed locally (partial match)"
       : report.reproduction.attempted
         ? "✗ Did not reproduce"
         : "— Not run",
+    "",
+    "Evidence:",
+    ...(supporting.length
+      ? supporting.map((check) => mark(check.present && check.supports, check.label))
+      : ["—"]),
+    "",
+    "Contradicting evidence:",
+    ...(contradicting.length ? contradicting.map((check) => `✗ ${check.label}`) : ["None"]),
     "",
     "Recommended Fix:",
     ...wrap(report.proposedFix.rationale || report.proposedFix.summary || "No fix proposed."),
@@ -52,12 +69,22 @@ function displaySeverity(severity: IncidentSeverity): string {
 }
 
 function introducedLine(report: DebuggingReport): string {
+  const regression = report.gitInvestigation.regression;
+  if (regression) {
+    const parts = [`Commit ${regression.commit.sha.slice(0, 7)}`, regression.commit.author];
+    if (regression.pullRequest) parts.push(`PR #${regression.pullRequest.number}`);
+    const files = regression.changed.slice(0, 3).map((file) => path.basename(file));
+    if (files.length) parts.push(files.join(", "));
+    parts.push(`${Math.round(regression.confidence * 100)}%`);
+    return parts.filter(Boolean).join(" ");
+  }
   const commit = report.gitInvestigation.introducing;
-  const pr = report.gitInvestigation.pullRequests[0];
-  const parts: string[] = [];
-  if (commit) parts.push(`Commit ${commit.sha.slice(0, 7)}`);
-  if (pr) parts.push(`PR #${pr.number}`);
-  if (parts.length) return parts.join(" ");
+  if (commit) {
+    const pr = report.gitInvestigation.pullRequests.find((item) => item.overlap?.length);
+    return [`Commit ${commit.sha.slice(0, 7)}`, commit.author, pr ? `PR #${pr.number}` : ""]
+      .filter(Boolean)
+      .join(" ");
+  }
   const blame = report.evidence.git.blame[0];
   if (blame) return `Commit ${blame.sha.slice(0, 7)}`;
   const recent = report.gitInvestigation.suspects[0] ?? report.evidence.git.commitsTouchingSuspects[0];
@@ -67,7 +94,7 @@ function introducedLine(report: DebuggingReport): string {
 
 function validationLines(report: DebuggingReport): string[] {
   const existing = report.testAnalysis.relatedTests.length > 0 || report.evidence.tests.relatedTests.length > 0;
-  const regression = Boolean(report.testAnalysis.proposedTest);
+  const regression = Boolean(report.testAnalysis.proposedTest || report.reproductionAnalysis.generatedTest);
   const suiteRan = report.verification.testsRan;
   const passed = report.verification.passed;
   const resolved = report.validationAnalysis.resolved || report.validationAnalysis.verdict === "likely-resolved";

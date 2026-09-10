@@ -1,16 +1,22 @@
 import type {
   AgentRun,
+  BlastRadiusAnalysis,
   CauseAnalysis,
   CodeInvestigation,
+  DebuggingMemory,
   DebuggingReport,
   DependencyAnalysis,
+  EnvironmentAnalysis,
+  FailureClassification,
   FixAnalysis,
   GitInvestigation,
   Hypothesis,
   IncidentReport,
   LogAnalysis,
+  ProductionIncident,
   ReproductionAnalysis,
   SandboxSession,
+  SpecialistFindings,
   StackFrame,
   TestAnalysis,
   ValidationAnalysis,
@@ -34,7 +40,18 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
           },
         ]
       : []),
-    { id: "evidence", label: "Evidence", state: "done", detail: `${e.error.frames.length} frames · ${e.sourceSnippets.length} snippets` },
+    {
+      id: "evidence",
+      label: "Evidence",
+      state: "done",
+      detail: `${e.error.frames.length} frames · ${e.sourceSnippets.length} snippets`,
+    },
+    {
+      id: "classify",
+      label: "Classify",
+      state: "done",
+      detail: report.classification?.summary ?? "Unclassified",
+    },
     {
       id: "reproduce",
       label: "Reproduce",
@@ -57,7 +74,13 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
       id: "verify",
       label: "Verify",
       state: verify.passed ? "done" : verify.testsRan ? "danger" : "skip",
-      detail: verify.passed ? "Tests passed" : verify.testsRan ? "Tests failed" : "Not run",
+      detail: report.iterations.length
+        ? report.iterations.map((iteration) => iteration.summary.replace("Attempt ", "#")).join(" · ")
+        : verify.passed
+          ? "Tests passed"
+          : verify.testsRan
+            ? "Tests failed"
+            : "Not run",
     },
   ];
 
@@ -104,6 +127,13 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
   ${agentsStrip(report.agentRuns)}
 
   ${incidentBanner(report.incidentReport)}
+
+  ${report.production ? productionCard(report.production) : ""}
+  ${report.classification ? classificationCard(report.classification) : ""}
+  ${report.environment ? environmentCard(report.environment) : ""}
+  ${report.blastRadius ? blastRadiusCard(report.blastRadius) : ""}
+  ${report.memory ? memoryCard(report.memory) : ""}
+  ${report.specialists ? specialistsCard(report.specialists) : ""}
 
   ${report.sandbox ? sandboxCard(report.sandbox) : ""}
 
@@ -177,6 +207,7 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
 
     <article class="col" id="col-rca">
       <h2>Root cause analysis</h2>
+      ${evidenceGraphCard(report.causeAnalysis.graph)}
       ${rootCauseAgentCard(report.causeAnalysis)}
       <div class="card tint-warn">
         <h3>Likely root cause</h3>
@@ -372,6 +403,78 @@ function incidentBanner(report: IncidentReport): string {
   </section>`;
 }
 
+function classificationCard(classification: FailureClassification): string {
+  return `<section class="incident" aria-label="Failure classification">
+    <div class="card">
+      <h3>Failure classification</h3>
+      <p class="meta">${esc(classification.family)} · ${esc(classification.category)}${classification.subtype ? ` · ${esc(classification.subtype)}` : ""}</p>
+      <p class="lead">${esc(classification.summary)}</p>
+      <p class="meta">Route ${esc(classification.routedAgents.join(", ") || "core agents")} · ${Math.round(classification.confidence * 100)}%</p>
+    </div>
+  </section>`;
+}
+
+function environmentCard(analysis: EnvironmentAnalysis): string {
+  const mismatches = analysis.mismatches
+    .map((item) => `<li>${esc(item.tool)}: ${esc(item.expected)} vs ${esc(item.actual)}</li>`)
+    .join("");
+  return `<div class="card ${analysis.mismatches.length ? "tint-warn" : ""}">
+    <h3>Environment</h3>
+    <p class="lead">${esc(analysis.summary)}</p>
+    ${mismatches ? `<ul>${mismatches}</ul>` : ""}
+    <p class="meta">${esc(
+      [analysis.local.os, analysis.local.flutter && `Flutter ${analysis.local.flutter}`, analysis.local.xcode && `Xcode ${analysis.local.xcode}`, analysis.local.gitBranch]
+        .filter(Boolean)
+        .join(" · "),
+    )}</p>
+  </div>`;
+}
+
+function blastRadiusCard(analysis: BlastRadiusAnalysis): string {
+  const used = analysis.usedBy.map((node) => `<li>${esc(node.impact.toUpperCase())} ${esc(node.name)}</li>`).join("");
+  return `<div class="card">
+    <h3>Blast radius</h3>
+    <p class="lead">${esc(analysis.summary)}</p>
+    ${used ? `<ul>${used}</ul>` : ""}
+  </div>`;
+}
+
+function memoryCard(memory: DebuggingMemory): string {
+  const matches = memory.matches
+    .map((match) => `<li>${esc(match.entry.rootCause)} (${Math.round(match.score * 100)}%)</li>`)
+    .join("");
+  return `<div class="card">
+    <h3>Debugging memory</h3>
+    <p class="lead">${esc(memory.summary)}</p>
+    ${matches ? `<ul>${matches}</ul>` : ""}
+  </div>`;
+}
+
+function productionCard(incident: ProductionIncident): string {
+  return `<section class="incident" aria-label="Production crash">
+    <div class="card tint-bad">
+      <h3>Production crash</h3>
+      <p class="meta">Version ${esc(incident.version ?? "unknown")} · ${incident.affectedUsers ?? "?"} users · first seen ${esc(incident.firstSeen ?? "unknown")}</p>
+      <p class="lead">${esc(incident.likelyCause)}</p>
+      <p class="meta">Confidence ${Math.round(incident.confidence * 100)}% · ${esc(incident.recommendedAction)}</p>
+    </div>
+  </section>`;
+}
+
+function specialistsCard(findings: SpecialistFindings): string {
+  const items = [
+    findings.crash?.summary,
+    findings.network?.summary,
+    findings.database?.summary,
+    findings.flutter?.summary,
+  ].filter((item): item is string => Boolean(item));
+  if (!items.length) return "";
+  return `<div class="card">
+    <h3>Specialized agents</h3>
+    <ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>
+  </div>`;
+}
+
 function fixAgentCard(analysis: FixAnalysis): string {
   const edits = analysis.proposal.edits
     .map(
@@ -422,19 +525,67 @@ function reproductionAgentCard(analysis: ReproductionAnalysis): string {
         .map((test) => `<li><code>${esc(test.file)}</code> — ${esc(test.reason)}</li>`)
         .join("")}</ul>`
     : "";
+  const generated = analysis.generatedTest
+    ? `<pre class="code">${esc(clip(analysis.generatedTest.content, 900))}</pre>`
+    : "";
+  const captured = analysis.capturedFailure
+    ? `<p class="meta">Captured ${esc(analysis.capturedFailure.type ?? "failure")}: ${esc(clip(analysis.capturedFailure.message ?? analysis.capturedFailure.excerpt, 160))}</p>`
+    : "";
   const handoff = analysis.handoff.length
     ? `<ul>${analysis.handoff.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>`
     : "";
-  const tone = analysis.result.reproduced ? "tint-bad" : analysis.result.attempted ? "tint-ok" : "";
+  const tone = analysis.result.reproduced
+    ? analysis.match === "matched"
+      ? "tint-bad"
+      : "tint-warn"
+    : analysis.result.attempted
+      ? "tint-ok"
+      : "";
 
   return `<div class="card ${tone}">
     <h3>Reproduction Agent</h3>
-    <p class="meta">Determine how to reproduce the issue</p>
+    <p class="meta">Reproduce the issue and match it against the reported failure</p>
     <p class="lead">${esc(analysis.summary)}</p>
-    <p class="meta">Method <code>${esc(analysis.method)}</code>${analysis.command ? ` · <code>${esc(analysis.command)}</code>` : ""}${analysis.runner ? ` · ${esc(analysis.runner)}` : ""}</p>
+    <p class="meta">Method <code>${esc(analysis.method)}</code> · match <code>${esc(analysis.match)}</code> · ${pct(analysis.confidence)}${analysis.command ? ` · <code>${esc(analysis.command)}</code>` : ""}${analysis.runner ? ` · ${esc(analysis.runner)}` : ""}</p>
+    <p>${esc(analysis.symptoms.summary)}</p>
+    <p class="meta">Scenario ${esc(analysis.scenario.title)}</p>
     ${steps}
     ${tests}
+    ${analysis.generatedTest ? `<p class="meta">${analysis.generatedTest.created ? "Wrote" : "Proposed"} <code>${esc(analysis.generatedTest.path)}</code></p>${generated}` : ""}
+    ${captured}
+    <p class="meta">${esc(analysis.matchDetail)}</p>
     ${handoff}
+  </div>`;
+}
+
+function evidenceGraphCard(graph: CauseAnalysis["graph"]): string {
+  const chain = graph.nodes
+    .map(
+      (node, index) =>
+        `${index === 0 ? "" : `<div class="egraph-edge" aria-hidden="true">↓</div>`}<div class="egraph-node kind-${esc(node.kind)}"><strong>${esc(node.label)}</strong>${
+          node.detail ? `<span>${esc(node.detail)}</span>` : ""
+        }</div>`,
+    )
+    .join("");
+  const supporting = graph.supporting
+    .map(
+      (check) =>
+        `<li class="${check.present && check.supports ? "ok" : "missing"}">${check.present && check.supports ? "✓" : "✗"} <strong>${esc(check.label)}</strong> ${esc(check.detail)}</li>`,
+    )
+    .join("");
+  const contra = graph.contradicting.length
+    ? graph.contradicting.map((check) => `<li class="bad">✗ <strong>${esc(check.label)}</strong> ${esc(check.detail)}</li>`).join("")
+    : `<li class="ok">None</li>`;
+
+  return `<div class="card tint-warn">
+    <h3>Evidence graph</h3>
+    <p class="meta">Why this is the root cause · ${pct(graph.confidence)}</p>
+    <p class="lead">${esc(graph.claim)}</p>
+    <div class="egraph" aria-label="Causal chain">${chain}</div>
+    <p class="meta">Evidence</p>
+    <ul class="checks">${supporting}</ul>
+    <p class="meta">Contradicting evidence</p>
+    <ul class="checks">${contra}</ul>
   </div>`;
 }
 
@@ -454,7 +605,7 @@ function rootCauseAgentCard(analysis: CauseAnalysis): string {
 
   return `<div class="card tint-warn">
     <h3>Root Cause Agent</h3>
-    <p class="meta">Build and rank possible causes</p>
+    <p class="meta">Build an evidence graph and rank possible causes</p>
     <p class="lead">${esc(analysis.summary)}</p>
     ${causes ? `<ol class="frames">${causes}</ol>` : ""}
     ${
@@ -467,8 +618,26 @@ function rootCauseAgentCard(analysis: CauseAnalysis): string {
 }
 
 function gitInvestigatorCard(analysis: GitInvestigation): string {
-  const introducing = analysis.introducing
-    ? `<p class="meta">Introducing <code>${esc(analysis.introducing.sha.slice(0, 8))}</code> ${esc(analysis.introducing.author)} (${esc(analysis.introducing.date)}) ${esc(analysis.introducing.subject)}</p>`
+  const regression = analysis.regression;
+  const introducing = regression
+    ? `<pre class="lead">${esc(
+        [
+          "Likely introduced by:",
+          `Commit: ${regression.commit.sha.slice(0, 7)}`,
+          `Author: ${regression.commit.author}`,
+          `PR: ${regression.pullRequest ? `#${regression.pullRequest.number}` : "none"}`,
+          "",
+          "Changed:",
+          ...(regression.changed.length ? regression.changed.map((file) => file.split(/[\\/]/).pop() ?? file) : ["Unknown"]),
+          "",
+          `Confidence: ${Math.round(regression.confidence * 100)}%`,
+        ].join("\n"),
+      )}</pre>`
+    : analysis.introducing
+      ? `<p class="meta">Introducing <code>${esc(analysis.introducing.sha.slice(0, 8))}</code> ${esc(analysis.introducing.author)} (${esc(analysis.introducing.date)}) ${esc(analysis.introducing.subject)}</p>`
+      : "";
+  const prBody = regression?.pullRequest?.body
+    ? `<p class="meta">${esc(regression.pullRequest.body.split("\n").slice(0, 6).join(" "))}</p>`
     : "";
   const suspects = analysis.suspects
     .slice(0, 6)
@@ -487,9 +656,10 @@ function gitInvestigatorCard(analysis: GitInvestigation): string {
 
   return `<div class="card">
     <h3>Git Investigator</h3>
-    <p class="meta">Find commits/PRs that introduced the problem</p>
+    <p class="meta">Find when the bug appeared (git regression)</p>
     <p class="lead">${esc(analysis.summary)}</p>
     ${introducing}
+    ${prBody}
     ${suspects ? `<ul>${suspects}</ul>` : ""}
     ${prs ? `<ul>${prs}</ul>` : ""}
     ${handoff}
@@ -755,6 +925,22 @@ const BOARD_CSS = `
   .frames .project .scope { color: var(--accent); }
   .meter { height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 8px 0; }
   .meter span { display: block; height: 100%; background: var(--accent); }
+  .egraph { display: flex; flex-direction: column; align-items: stretch; gap: 0; margin: 10px 0 12px; }
+  .egraph-node {
+    text-align: center;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  }
+  .egraph-node strong { display: block; font-size: 13px; }
+  .egraph-node span { display: block; color: var(--muted); font-size: 11px; font-weight: 400; margin-top: 2px; }
+  .egraph-edge { text-align: center; color: var(--muted); font-size: 14px; line-height: 1.2; padding: 2px 0; }
+  .checks { list-style: none; padding: 0; }
+  .checks li { font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .checks .ok { color: var(--ok); }
+  .checks .missing { color: var(--muted); }
+  .checks .bad { color: var(--bad); }
   .evidence { color: var(--muted); font-size: 12px; }
   .kv { list-style: none; padding: 0; }
   .kv li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding: 6px 0; }

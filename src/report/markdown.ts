@@ -60,6 +60,36 @@ export function renderMarkdownReport(report: DebuggingReport): string {
     `- **Verification:** ${report.verification.summary}`,
     ...report.notes.map((note) => `- ${note}`),
     "",
+    report.classification
+      ? `## Failure classification\n\n**${report.classification.summary}** (${pct(report.classification.confidence)})\nRouted: ${report.classification.routedAgents.join(", ") || "core agents"}`
+      : "",
+    "",
+    report.iterations.length
+      ? `## Patch → test → verify\n\n${report.iterations.map((it) => `- ${it.summary}`).join("\n")}`
+      : "",
+    "",
+    report.environment
+      ? `## Environment\n\n${report.environment.summary}${
+          report.environment.mismatches.length
+            ? `\n\n${report.environment.mismatches.map((item) => `- ${item.tool}: ${item.expected} vs ${item.actual}`).join("\n")}`
+            : ""
+        }`
+      : "",
+    "",
+    report.blastRadius
+      ? `## Blast radius\n\n${report.blastRadius.summary}${
+          report.blastRadius.usedBy.length
+            ? `\n\nUsed by:\n${report.blastRadius.usedBy.map((node) => `- ${node.impact.toUpperCase()} ${node.name}`).join("\n")}`
+            : ""
+        }`
+      : "",
+    "",
+    report.memory ? `## Debugging memory\n\n${report.memory.summary}` : "",
+    "",
+    report.production
+      ? `## Production incident\n\n- Version: ${report.production.version ?? "unknown"}\n- Affected users: ${report.production.affectedUsers ?? "unknown"}\n- First seen: ${report.production.firstSeen ?? "unknown"}\n- Likely cause: ${report.production.likelyCause}\n- Recommended action: ${report.production.recommendedAction}\n- Confidence: ${pct(report.production.confidence)}`
+      : "",
+    "",
     report.agentRuns.length
       ? `## Core agents\n\n${report.agentRuns
           .map((run) => `- **${run.name}** — ${run.responsibility}\n  ${run.summary}`)
@@ -112,9 +142,31 @@ export function renderMarkdownReport(report: DebuggingReport): string {
           "## Git Investigator",
           "",
           report.gitInvestigation.summary,
-          report.gitInvestigation.introducing
-            ? `\nLikely introducing commit: \`${report.gitInvestigation.introducing.sha.slice(0, 8)}\` ${report.gitInvestigation.introducing.author} (${report.gitInvestigation.introducing.date}): ${report.gitInvestigation.introducing.subject}`
-            : "",
+          report.gitInvestigation.regression
+            ? [
+                "",
+                "Likely introduced by:",
+                "",
+                `- **Commit:** \`${report.gitInvestigation.regression.commit.sha.slice(0, 7)}\``,
+                `- **Author:** ${report.gitInvestigation.regression.commit.author}`,
+                `- **PR:** ${report.gitInvestigation.regression.pullRequest ? `#${report.gitInvestigation.regression.pullRequest.number}` : "none"}`,
+                report.gitInvestigation.regression.changed.length
+                  ? `\nChanged:\n${report.gitInvestigation.regression.changed.map((file) => `- \`${file}\``).join("\n")}`
+                  : "",
+                `\nConfidence: ${Math.round(report.gitInvestigation.regression.confidence * 100)}%`,
+                report.gitInvestigation.regression.pullRequest?.title
+                  ? `\nPR inspection: [#${report.gitInvestigation.regression.pullRequest.number} ${report.gitInvestigation.regression.pullRequest.title}](${report.gitInvestigation.regression.pullRequest.url})${report.gitInvestigation.regression.pullRequest.author ? ` (${report.gitInvestigation.regression.pullRequest.author})` : ""}`
+                  : "",
+                report.gitInvestigation.regression.pullRequest?.body
+                  ? `\n${report.gitInvestigation.regression.pullRequest.body.split("\n").slice(0, 8).join("\n")}`
+                  : "",
+                report.gitInvestigation.regression.diffExcerpt
+                  ? `\nDiff excerpt:\n\`\`\`\n${report.gitInvestigation.regression.diffExcerpt}\n\`\`\``
+                  : "",
+              ].join("\n")
+            : report.gitInvestigation.introducing
+              ? `\nLikely introducing commit: \`${report.gitInvestigation.introducing.sha.slice(0, 8)}\` ${report.gitInvestigation.introducing.author} (${report.gitInvestigation.introducing.date}): ${report.gitInvestigation.introducing.subject}`
+              : "",
           report.gitInvestigation.suspects.length
             ? `\nSuspects:\n${report.gitInvestigation.suspects
                 .map(
@@ -158,13 +210,22 @@ export function renderMarkdownReport(report: DebuggingReport): string {
           "## Reproduction Agent",
           "",
           report.reproductionAnalysis.summary,
-          `\nMethod: \`${report.reproductionAnalysis.method}\`${report.reproductionAnalysis.command ? ` · \`${report.reproductionAnalysis.command}\`` : ""}`,
+          `\nMethod: \`${report.reproductionAnalysis.method}\` · match \`${report.reproductionAnalysis.match}\` (${pct(report.reproductionAnalysis.confidence)})${report.reproductionAnalysis.command ? ` · \`${report.reproductionAnalysis.command}\`` : ""}`,
+          `\nSymptoms: ${report.reproductionAnalysis.symptoms.summary}`,
+          `\nScenario: ${report.reproductionAnalysis.scenario.title}`,
           report.reproductionAnalysis.steps.length
             ? `\nSteps:\n${report.reproductionAnalysis.steps.map((step) => `- ${step}`).join("\n")}`
             : "",
           report.reproductionAnalysis.relatedTests.length
             ? `\nRelated tests:\n${report.reproductionAnalysis.relatedTests.map((t) => `- \`${t.file}\` — ${t.reason}`).join("\n")}`
             : "",
+          report.reproductionAnalysis.generatedTest
+            ? `\n${report.reproductionAnalysis.generatedTest.created ? "Wrote" : "Proposed"} repro test: \`${report.reproductionAnalysis.generatedTest.path}\`\n\n\`\`\`\n${report.reproductionAnalysis.generatedTest.content}\n\`\`\``
+            : "",
+          report.reproductionAnalysis.capturedFailure
+            ? `\nCaptured: ${report.reproductionAnalysis.capturedFailure.type ?? "failure"}: ${report.reproductionAnalysis.capturedFailure.message ?? report.reproductionAnalysis.capturedFailure.excerpt}`
+            : "",
+          `\nCompare: ${report.reproductionAnalysis.matchDetail}`,
           report.reproductionAnalysis.handoff.length
             ? `\nHandoff:\n${report.reproductionAnalysis.handoff.map((note) => `- ${note}`).join("\n")}`
             : "",
@@ -176,6 +237,27 @@ export function renderMarkdownReport(report: DebuggingReport): string {
           "## Root Cause Agent",
           "",
           report.causeAnalysis.summary,
+          report.causeAnalysis.graph
+            ? [
+                "",
+                "### Evidence graph",
+                "",
+                report.causeAnalysis.graph.nodes.map((node) => node.label).join(" → "),
+                "",
+                `**Root Cause:** ${report.causeAnalysis.graph.claim}`,
+                `**Confidence:** ${pct(report.causeAnalysis.graph.confidence)}`,
+                "",
+                "Evidence:",
+                ...report.causeAnalysis.graph.supporting.map(
+                  (check) => `- ${check.present && check.supports ? "✓" : "✗"} **${check.label}**: ${check.detail}`,
+                ),
+                "",
+                "Contradicting evidence:",
+                ...(report.causeAnalysis.graph.contradicting.length
+                  ? report.causeAnalysis.graph.contradicting.map((check) => `- ✗ **${check.label}**: ${check.detail}`)
+                  : ["- None"]),
+              ].join("\n")
+            : "",
           report.causeAnalysis.causes.length
             ? `\nRanked causes:\n${report.causeAnalysis.causes
                 .map(

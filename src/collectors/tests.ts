@@ -75,6 +75,8 @@ async function findRelatedTests(repoPath: string, frames: StackFrame[]): Promise
       path.join("tests", `${stem}.test${parsed.ext}`),
       path.join("test", `${stem}_test${parsed.ext}`),
       path.join(parsed.dir, `test_${stem}${parsed.ext}`),
+      path.join("test", `${stem}_test.dart`),
+      path.join(parsed.dir, `${stem}_test.dart`),
     ];
 
     for (const candidate of candidates) {
@@ -88,7 +90,7 @@ async function findRelatedTests(repoPath: string, frames: StackFrame[]): Promise
       try {
         const entries = await readdir(dir);
         for (const entry of entries) {
-          if (!/\.(test|spec)\./.test(entry) && !entry.startsWith("test_")) continue;
+          if (!/\.(test|spec)\./.test(entry) && !entry.startsWith("test_") && !entry.endsWith("_test.dart")) continue;
           const relFile = path.join(parsed.dir, entry);
           if (seen.has(relFile)) continue;
           seen.add(relFile);

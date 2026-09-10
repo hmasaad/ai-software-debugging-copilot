@@ -4,15 +4,23 @@ import type {
   BugInput,
   CauseAnalysis,
   CodeInvestigation,
+  CrashAnalysis,
+  DatabaseAnalysis,
+  DebuggingMemory,
   DependencyAnalysis,
+  EnvironmentAnalysis,
   EvidenceBundle,
+  FailureClassification,
   FixAnalysis,
+  FlutterAnalysis,
   GitInvestigation,
   IncidentReport,
   Investigator,
   LogAnalysis,
+  NetworkAnalysis,
   ReproductionAnalysis,
   RootCauseAnalysis,
+  SpecialistFindings,
   TestAnalysis,
   ValidationAnalysis,
 } from "../types.js";
@@ -31,6 +39,10 @@ export interface AgentContext {
   testAnalysis?: TestAnalysis;
   validationAnalysis?: ValidationAnalysis;
   incidentReport?: IncidentReport;
+  classification?: FailureClassification;
+  environment?: EnvironmentAnalysis;
+  specialists?: SpecialistFindings;
+  memory?: DebuggingMemory;
   investigator?: Investigator;
   runTests?: boolean;
   apply?: boolean;
@@ -50,6 +62,36 @@ export const LOG_ANALYZER = {
   responsibility: "Understand logs, exceptions and stack traces",
 };
 
+export const CLASSIFIER = {
+  id: "classifier" as const satisfies AgentId,
+  name: "Failure Classifier",
+  responsibility: "Classify the failure before investigation and route specialists",
+};
+
+export const CRASH_AGENT = {
+  id: "crash-agent" as const satisfies AgentId,
+  name: "Crash Agent",
+  responsibility: "Specialize in runtime crashes, null derefs, and ANRs",
+};
+
+export const NETWORK_AGENT = {
+  id: "network-agent" as const satisfies AgentId,
+  name: "Network Agent",
+  responsibility: "Specialize in API, HTTP, and backend failures",
+};
+
+export const DATABASE_AGENT = {
+  id: "database-agent" as const satisfies AgentId,
+  name: "Database Agent",
+  responsibility: "Specialize in database and persistence failures",
+};
+
+export const FLUTTER_AGENT = {
+  id: "flutter-agent" as const satisfies AgentId,
+  name: "Flutter Debugging Agent",
+  responsibility: "Understand Bloc, Dio, Drift, DI, lifecycle, widgets, and platform builds",
+};
+
 export const CODE_INVESTIGATOR = {
   id: "code-investigator" as const satisfies AgentId,
   name: "Code Investigator",
@@ -59,7 +101,7 @@ export const CODE_INVESTIGATOR = {
 export const GIT_INVESTIGATOR = {
   id: "git-investigator" as const satisfies AgentId,
   name: "Git Investigator",
-  responsibility: "Find commits/PRs that introduced the problem",
+  responsibility: "Find when the bug appeared (git regression)",
 };
 
 export const DEPENDENCY_ANALYST = {
@@ -71,13 +113,13 @@ export const DEPENDENCY_ANALYST = {
 export const REPRODUCTION_AGENT = {
   id: "reproduction-agent" as const satisfies AgentId,
   name: "Reproduction Agent",
-  responsibility: "Determine how to reproduce the issue",
+  responsibility: "Reproduce the issue and match it against the reported failure",
 };
 
 export const ROOT_CAUSE_AGENT = {
   id: "root-cause-agent" as const satisfies AgentId,
   name: "Root Cause Agent",
-  responsibility: "Build and rank possible causes",
+  responsibility: "Build an evidence graph and rank possible causes",
 };
 
 export const FIX_AGENT = {
@@ -117,4 +159,9 @@ export type {
   TestAnalysis,
   ValidationAnalysis,
   IncidentReport,
+  FailureClassification,
+  CrashAnalysis,
+  NetworkAnalysis,
+  DatabaseAnalysis,
+  FlutterAnalysis,
 };

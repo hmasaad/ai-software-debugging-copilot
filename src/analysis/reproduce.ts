@@ -29,11 +29,24 @@ export async function reproduceBug(
       summary: "Could not parse the test command.",
     };
   }
-  const result = await runCommand(bin, args, {
-    cwd: input.repoPath,
-    timeoutMs: 90_000,
-    env: { ...process.env, CI: "true", FORCE_COLOR: "0" },
-  });
+
+  let result;
+  try {
+    result = await runCommand(bin, args, {
+      cwd: input.repoPath,
+      timeoutMs: 90_000,
+      env: { ...process.env, CI: "true", FORCE_COLOR: "0" },
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      attempted: true,
+      reproduced: false,
+      command,
+      output: reason,
+      summary: `Could not spawn \`${command}\`: ${reason}`,
+    };
+  }
 
   const output = truncate(`${result.stdout}\n${result.stderr}`.trim(), 12_000);
   const reproduced = result.code !== 0;
@@ -57,6 +70,7 @@ export function selectTestCommand(input: Pick<BugInput, "failingTest">, tests: T
     if (tests.runner === "jest") return `npx jest ${quote(input.failingTest)}`;
     if (tests.runner === "pytest") return `pytest -q ${quote(input.failingTest)}`;
     if (tests.runner === "go-test") return `go test ${quote(input.failingTest)}`;
+    if (tests.runner === "flutter-test") return `flutter test ${quote(input.failingTest)}`;
   }
 
   const firstRelated = tests.relatedTests[0]?.file;
@@ -65,6 +79,9 @@ export function selectTestCommand(input: Pick<BugInput, "failingTest">, tests: T
   }
   if (firstRelated && tests.runner === "jest") {
     return `npx jest ${quote(firstRelated)}`;
+  }
+  if (firstRelated && tests.runner === "flutter-test") {
+    return `flutter test ${quote(firstRelated)}`;
   }
 
   return base;

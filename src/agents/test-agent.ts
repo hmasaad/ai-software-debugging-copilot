@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { unlink, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { verifyFix } from "../analysis/verify.js";
 import type {
@@ -11,6 +11,7 @@ import type {
   TestAnalysis,
   TestEvidence,
 } from "../types.js";
+import { proposeReproductionTest, understandSymptoms } from "../analysis/repro-scenario.js";
 import { TEST_AGENT, type AgentContext, type SpecialistAgent } from "./types.js";
 
 /**
@@ -40,19 +41,22 @@ export class TestAgent implements SpecialistAgent<TestAnalysis> {
   async analyze(ctx: AgentContext): Promise<TestAnalysis> {
     const tests = ctx.evidence?.tests ?? { relatedTests: [] };
     const relatedTests = tests.relatedTests;
-    const proposedTest = proposeRegressionTest({
-      repoPath: ctx.input.repoPath,
-      tests,
-      logAnalysis: ctx.logAnalysis,
-      codeInvestigation: ctx.codeInvestigation,
-    });
+    const proposedTest =
+      ctx.reproduction?.generatedTest ??
+      proposeRegressionTest({
+        repoPath: ctx.input.repoPath,
+        tests,
+        logAnalysis: ctx.logAnalysis,
+        codeInvestigation: ctx.codeInvestigation,
+      });
 
     const createdFiles: string[] = [];
     let created = proposedTest;
-    const shouldCreate = Boolean(ctx.apply && proposedTest && relatedTests.length === 0);
+    const shouldCreate = Boolean(ctx.apply && proposedTest && !proposedTest.created && relatedTests.length === 0);
     if (shouldCreate && proposedTest) {
       const abs = path.resolve(ctx.input.repoPath, proposedTest.path);
       if (abs.startsWith(path.resolve(ctx.input.repoPath)) && !existsSync(abs)) {
+        await mkdir(path.dirname(abs), { recursive: true });
         await writeFile(abs, proposedTest.content, "utf8");
         createdFiles.push(abs);
         created = { ...proposedTest, created: true };
@@ -100,6 +104,20 @@ export function proposeRegressionTest(input: {
   const origin = input.codeInvestigation?.origin ?? input.logAnalysis?.crashSite;
   const fn = origin?.functionName?.replace(/[^A-Za-z0-9_$]/g, "") || "repro";
   if (!origin?.file) return undefined;
+
+  const dart = origin.file.endsWith(".dart") || input.logAnalysis?.error.language === "dart";
+  if (dart) {
+    return proposeReproductionTest({
+      repoPath: input.repoPath,
+      error: input.logAnalysis?.error ?? { message: "Unknown error", frames: [origin], language: "dart" },
+      crashSite: origin,
+      symptoms: understandSymptoms({
+        error: input.logAnalysis?.error ?? { message: "Unknown error", frames: [origin], language: "dart" },
+        crashSite: origin,
+      }),
+      tests: input.tests,
+    });
+  }
 
   let sourceRel = origin.file.replace(/\\/g, "/");
   if (input.repoPath && path.isAbsolute(origin.file)) {

@@ -31,6 +31,38 @@ describe("Test Agent", () => {
     expect(proposed?.created).toBe(false);
   });
 
+  it("proposes a Flutter test for a dart crash site", () => {
+    const proposed = proposeRegressionTest({
+      tests: { runner: "flutter-test", testCommand: "flutter test", relatedTests: [] },
+      logAnalysis: {
+        error: {
+          type: "NullCheckError",
+          message: "Null check operator used on a null value",
+          frames: [],
+          language: "dart",
+        },
+        logs: { sources: [], excerpt: "" },
+        crashSite: {
+          file: "lib/savings/SavingsMemberMediaBloc.dart",
+          line: 217,
+          functionName: "_onLoad",
+          raw: "",
+          inProject: true,
+        },
+        exceptionChain: [],
+        logLevels: { fatal: 0, error: 1, warn: 0, info: 0, debug: 0 },
+        timestamps: [],
+        correlationIds: [],
+        repeating: [],
+        summary: "",
+        handoff: [],
+      },
+    });
+
+    expect(proposed?.path).toBe("test/savings_member_media_bloc_test.dart");
+    expect(proposed?.content).toContain("should handle null savings member media response");
+  });
+
   it("still proposes an extra regression when a related test already exists", () => {
     const proposed = proposeRegressionTest({
       tests: {

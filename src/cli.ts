@@ -5,14 +5,30 @@ import { debugAutonomously } from "./autonomous/debug.js";
 import { debugBug } from "./pipeline.js";
 import { renderMarkdownReport } from "./report/markdown.js";
 import { renderDebugResult } from "./report/result.js";
+import { renderEvidenceGraphAscii } from "./analysis/evidence-graph.js";
+import { renderGitRegressionAscii } from "./analysis/git-regression.js";
+import { renderAttemptLog } from "./analysis/attempts.js";
+import { renderClassificationAscii } from "./analysis/classify.js";
+import { renderBlastRadiusAscii } from "./analysis/blast-radius.js";
+import { renderEnvironmentAscii } from "./collectors/runtime.js";
+import { renderProductionIncidentAscii } from "./analysis/production.js";
+import { renderMemoryAscii } from "./analysis/memory.js";
+import { runEvalSuite } from "./evals/run.js";
 import { serveInvestigationBoard } from "./board/serve.js";
 import type { DebuggingReport, InvestigatorKind } from "./types.js";
 
 const HELP = `Usage: debug-copilot [options]
        debug-copilot board [--json <path>] [--port <n>]
+       debug-copilot evals
 
-Investigate a bug like an engineer: collect evidence, reproduce, rank root
-causes, propose a fix, run tests, and write a debugging report.
+Investigate a bug like an engineer: classify the failure, collect evidence,
+reproduce, rank root causes, patch, run tests, and verify — iterating when
+tests fail.
+
+Commands:
+  debug-copilot [options]     Investigate a bug
+  debug-copilot board         Open the last investigation board
+  debug-copilot evals         Run the debugging benchmark
 
 With --autonomous the agent works in an isolated git worktree: inspect,
 search, git history, reproduce, patch, re-test, inspect the diff, and revert
@@ -25,13 +41,18 @@ Options:
   --stack <text>          Stack trace (or pass via stdin)
   --log <path>            Path to a log file
   --test <path>           Failing test file or name
-  --context <text>        Extra runtime context
+  --context <text>        Extra runtime context (also used as env baseline)
+  --version <id>          Production app version (incident mode)
+  --affected-users <n>    Production crash user count
+  --first-seen <text>     First occurrence timestamp
+  --source <name>         crashlytics | sentry | logs
+  --baseline-env <path>   JSON toolchain snapshot to compare against
   --autonomous            Investigate in an isolated sandbox
   --keep-sandbox          Leave the sandbox directory on disk
   --apply                 Apply the patch (promote from sandbox in --autonomous)
   --run-tests             Reproduce and verify with the repo's test runner (default: true)
   --no-run-tests          Skip test execution
-  --max-iterations <n>    Fix/verify loops (default: 2)
+  --max-iterations <n>    Patch/test/verify loops (default: 3)
   --investigator <name>   auto | heuristic | openai | anthropic | cursor
   --model <id>            Override model id
   --report <path>         Write markdown report (default: ./debug-report.md)
@@ -53,12 +74,17 @@ async function main(argv: string[]): Promise<void> {
       log: { type: "string" },
       test: { type: "string" },
       context: { type: "string" },
+      version: { type: "string" },
+      "affected-users": { type: "string" },
+      "first-seen": { type: "string" },
+      source: { type: "string" },
+      "baseline-env": { type: "string" },
       apply: { type: "boolean", default: false },
       autonomous: { type: "boolean", default: false },
       "keep-sandbox": { type: "boolean", default: false },
       "run-tests": { type: "boolean", default: true },
       "no-run-tests": { type: "boolean", default: false },
-      "max-iterations": { type: "string", default: "2" },
+      "max-iterations": { type: "string", default: "3" },
       investigator: { type: "string" },
       model: { type: "string" },
       report: { type: "string", default: "debug-report.md" },
@@ -80,6 +106,16 @@ async function main(argv: string[]): Promise<void> {
   const port = Number.parseInt(values.port ?? "8787", 10) || 8787;
   const open = !values["no-open"];
 
+  if (positionals[0] === "evals") {
+    const evals = await runEvalSuite();
+    process.stdout.write(`${evals.summary}\n`);
+    for (const testCase of evals.cases) {
+      process.stderr.write(`${testCase.passed ? "✓" : "✗"} ${testCase.title} — ${testCase.detail}\n`);
+    }
+    if (evals.cases.some((item) => !item.passed)) process.exitCode = 2;
+    return;
+  }
+
   if (positionals[0] === "board") {
     const jsonPath = values.json ?? "debug-report.json";
     const report = await loadReport(jsonPath);
@@ -93,6 +129,11 @@ async function main(argv: string[]): Promise<void> {
     throw new Error(`Unknown investigator: ${investigator}`);
   }
 
+  const source = values.source as "crashlytics" | "sentry" | "logs" | undefined;
+  if (source && !["crashlytics", "sentry", "logs"].includes(source)) {
+    throw new Error(`Unknown incident source: ${source}`);
+  }
+
   const jsonPath = values.json ?? (values.board ? "debug-report.json" : undefined);
   const bug = {
     repoPath: values.repo ?? process.cwd(),
@@ -101,6 +142,10 @@ async function main(argv: string[]): Promise<void> {
     logPath: values.log,
     failingTest: values.test,
     extraContext: values.context,
+    version: values.version,
+    affectedUsers: values["affected-users"] ? Number.parseInt(values["affected-users"], 10) : undefined,
+    firstSeen: values["first-seen"],
+    incidentSource: source,
   };
   const pipeline = {
     repoPath: values.repo ?? process.cwd(),
@@ -108,11 +153,12 @@ async function main(argv: string[]): Promise<void> {
     autonomous: values.autonomous,
     keepSandbox: values["keep-sandbox"],
     runTests: values["no-run-tests"] ? false : values["run-tests"],
-    maxIterations: Number.parseInt(values["max-iterations"] ?? "2", 10) || 2,
+    maxIterations: Number.parseInt(values["max-iterations"] ?? "3", 10) || 3,
     investigator,
     model: values.model,
     reportPath: values.report,
     jsonReportPath: jsonPath,
+    baselineEnvPath: values["baseline-env"],
     onEvent: (event: { agent?: string; stage: string; message: string }) => {
       const label = event.agent ?? event.stage;
       process.stderr.write(`[${label}] ${event.message}\n`);
@@ -124,6 +170,28 @@ async function main(argv: string[]): Promise<void> {
     : await debugBug(bug, pipeline);
 
   process.stderr.write(`\n${renderDebugResult(report)}\n`);
+  process.stderr.write(`\n${renderEvidenceGraphAscii(report.causeAnalysis.graph)}\n`);
+  if (report.gitInvestigation.regression) {
+    process.stderr.write(`\n${renderGitRegressionAscii(report.gitInvestigation.regression)}\n`);
+  }
+  if (report.iterations.length) {
+    process.stderr.write(`\n${renderAttemptLog(report.iterations)}\n`);
+  }
+  if (report.classification) {
+    process.stderr.write(`\n${renderClassificationAscii(report.classification)}\n`);
+  }
+  if (report.environment?.mismatches.length) {
+    process.stderr.write(`\n${renderEnvironmentAscii(report.environment)}\n`);
+  }
+  if (report.blastRadius) {
+    process.stderr.write(`\n${renderBlastRadiusAscii(report.blastRadius)}\n`);
+  }
+  if (report.production) {
+    process.stderr.write(`\n${renderProductionIncidentAscii(report.production)}\n`);
+  }
+  if (report.memory?.matches.length) {
+    process.stderr.write(`\n${renderMemoryAscii(report.memory)}\n`);
+  }
   if (values.report) process.stderr.write(`Report: ${values.report}\n`);
   if (jsonPath) process.stderr.write(`JSON: ${jsonPath}\n`);
 

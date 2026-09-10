@@ -85,6 +85,25 @@ async function collectBlame(cwd: string, repoPath: string, frames: StackFrame[])
   return blame;
 }
 
+export async function listCommitFiles(repoPath: string, sha: string): Promise<string[]> {
+  const result = await git(repoPath, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha]);
+  if (!result || result.code !== 0) return [];
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 40);
+}
+
+export async function showCommitDiff(repoPath: string, sha: string, files: string[]): Promise<string> {
+  const paths = files.slice(0, 4);
+  const args = paths.length ? ["show", "--no-color", sha, "--", ...paths] : ["show", "--no-color", "--stat", sha];
+  const result = await git(repoPath, args, 12_000);
+  if (!result || result.code !== 0) return "";
+  const text = result.stdout.trim();
+  return text.length > 4_000 ? `${text.slice(0, 4_000)}\n…` : text;
+}
+
 function parseCommitLines(stdout: string): GitCommit[] {
   return stdout
     .split("\n")

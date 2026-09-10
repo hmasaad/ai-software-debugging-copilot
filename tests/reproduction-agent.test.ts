@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  compareFailures,
+  proposeReproductionTest,
+  understandSymptoms,
+} from "../src/analysis/repro-scenario.js";
+import {
   classifyReproductionMethod,
   planReproduction,
   ReproductionAgent,
@@ -18,7 +23,7 @@ describe("Reproduction Agent", () => {
     const agent = new ReproductionAgent();
     expect(agent.id).toBe("reproduction-agent");
     expect(agent.name).toBe(REPRODUCTION_AGENT.name);
-    expect(agent.responsibility).toBe("Determine how to reproduce the issue");
+    expect(agent.responsibility).toBe("Reproduce the issue and match it against the reported failure");
   });
 
   it("plans a failing-test command and crash-site steps", () => {
@@ -47,7 +52,7 @@ describe("Reproduction Agent", () => {
     expect(plan.steps.some((step) => step.includes("Expected NaN to equal 10"))).toBe(true);
   });
 
-  it("reproduces the cart fixture failure", async () => {
+  it("reproduces the cart fixture failure and matches the report", async () => {
     const fixture = await createCartFixture();
     fixtures.push(fixture.dir);
 
@@ -65,7 +70,75 @@ describe("Reproduction Agent", () => {
 
     expect(run.status).toBe("ok");
     expect(result.result.reproduced).toBe(true);
+    expect(result.match).toBe("matched");
+    expect(result.confidence).toBeGreaterThan(0.8);
     expect(result.command).toContain("npm test");
-    expect(result.steps.length).toBeGreaterThan(1);
+    expect(result.symptoms.signals).toContain("assertion-mismatch");
+    expect(result.scenario.title).toBeTruthy();
+    expect(result.steps.some((step) => step.startsWith("Understand symptoms"))).toBe(true);
+    expect(result.steps.some((step) => step.startsWith("Compare with the reported failure"))).toBe(true);
+    expect(result.capturedFailure?.excerpt || result.result.output).toMatch(/NaN/i);
+  });
+
+  it("generates a Flutter regression test for a null savings media crash", () => {
+    const crashSite = {
+      file: "lib/savings/SavingsMemberMediaBloc.dart",
+      line: 217,
+      functionName: "SavingsMemberMediaBloc._onLoad",
+      raw: "SavingsMemberMediaBloc.dart:217",
+      inProject: true,
+    };
+    const error = {
+      type: "NullCheckError",
+      message: "Null check operator used on a null value",
+      frames: [crashSite],
+      language: "dart" as const,
+    };
+    const symptoms = understandSymptoms({ error, crashSite });
+    const proposed = proposeReproductionTest({
+      error,
+      crashSite,
+      symptoms,
+      tests: { runner: "flutter-test", testCommand: "flutter test", relatedTests: [] },
+    });
+
+    expect(symptoms.signals).toContain("null-deref");
+    expect(proposed?.path).toBe("test/savings_member_media_bloc_test.dart");
+    expect(proposed?.content).toContain("should handle null savings member media response");
+    expect(proposed?.content).toContain("package:flutter_test/flutter_test.dart");
+    expect(proposed?.content).toContain("Null check operator used on a null value");
+    expect(proposed?.content).toContain("SavingsMemberMediaBloc.dart:217");
+    expect(classifyReproductionMethod({ failingTest: undefined }, { relatedTests: [] }, true)).toBe("generated-test");
+  });
+
+  it("treats a matching captured failure as matched", () => {
+    const compared = compareFailures({
+      reported: {
+        type: "NullCheckError",
+        message: "Null check operator used on a null value",
+        frames: [],
+        language: "dart",
+      },
+      crashSite: {
+        file: "SavingsMemberMediaBloc.dart",
+        line: 217,
+        functionName: "_onLoad",
+        raw: "",
+        inProject: true,
+      },
+      captured: {
+        type: "NullCheckError",
+        message: "Null check operator used on a null value",
+        file: "SavingsMemberMediaBloc.dart",
+        line: 217,
+        excerpt: "Null check operator used on a null value",
+      },
+      output: "Null check operator used on a null value\n#0 _onLoad (package:app/SavingsMemberMediaBloc.dart:217:12)",
+      attempted: true,
+      reproduced: true,
+    });
+
+    expect(compared.match).toBe("matched");
+    expect(compared.confidence).toBeGreaterThan(0.85);
   });
 });

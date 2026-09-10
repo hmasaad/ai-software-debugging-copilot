@@ -7,6 +7,10 @@ export interface BugInput {
   logPath?: string;
   failingTest?: string;
   extraContext?: string;
+  version?: string;
+  affectedUsers?: number;
+  firstSeen?: string;
+  incidentSource?: "crashlytics" | "sentry" | "logs";
 }
 
 export interface StackFrame {
@@ -70,6 +74,8 @@ export interface PullRequestEvidence {
   author?: string;
   mergedAt?: string;
   files?: string[];
+  body?: string;
+  overlap?: string[];
 }
 
 export interface RelatedTest {
@@ -100,6 +106,16 @@ export interface RuntimeContext {
   arch: string;
   node?: string;
   python?: string;
+  flutter?: string;
+  dart?: string;
+  xcode?: string;
+  gradle?: string;
+  kotlin?: string;
+  device?: string;
+  flavor?: string;
+  gitBranch?: string;
+  gitSha?: string;
+  dependencies?: Array<{ name: string; version: string }>;
   cwd: string;
   ci: boolean;
   envHints: string[];
@@ -131,6 +147,11 @@ export interface EvidenceBundle {
   testAnalysis?: TestAnalysis;
   validationAnalysis?: ValidationAnalysis;
   incidentReport?: IncidentReport;
+  classification?: FailureClassification;
+  environment?: EnvironmentAnalysis;
+  specialists?: SpecialistFindings;
+  blastRadius?: BlastRadiusAnalysis;
+  memory?: DebuggingMemory;
 }
 
 export interface ReproductionResult {
@@ -183,8 +204,13 @@ export interface VerificationResult {
   summary: string;
 }
 
+export type AttemptOutcome = "tests-failed" | "tests-passed" | "not-run";
+
 export interface IterationRecord {
   index: number;
+  attempt: number;
+  outcome: AttemptOutcome;
+  summary: string;
   rootCause: RootCauseAnalysis;
   fix: FixProposal;
   verification: VerificationResult;
@@ -214,6 +240,12 @@ export interface DebuggingReport {
   validationAnalysis: ValidationAnalysis;
   incidentReport: IncidentReport;
   sandbox?: SandboxSession;
+  classification?: FailureClassification;
+  environment?: EnvironmentAnalysis;
+  specialists?: SpecialistFindings;
+  blastRadius?: BlastRadiusAnalysis;
+  memory?: DebuggingMemory;
+  production?: ProductionIncident;
 }
 
 export interface PipelineOptions {
@@ -231,12 +263,19 @@ export interface PipelineOptions {
   investigatorInstance?: Investigator;
   autonomous?: boolean;
   keepSandbox?: boolean;
+  baselineEnvPath?: string;
 }
 
 export type InvestigatorKind = "auto" | "heuristic" | "openai" | "anthropic" | "cursor";
 
 export type PipelineStage =
   | "log-analyzer"
+  | "classifier"
+  | "environment"
+  | "crash-agent"
+  | "network-agent"
+  | "database-agent"
+  | "flutter-agent"
   | "code-investigator"
   | "git-investigator"
   | "dependency-analyst"
@@ -245,6 +284,8 @@ export type PipelineStage =
   | "fix-agent"
   | "test-agent"
   | "validation-agent"
+  | "blast-radius"
+  | "memory"
   | "incident-agent"
   | "sandbox"
   | "autonomous"
@@ -254,6 +295,7 @@ export type PipelineStage =
   | "fix"
   | "test"
   | "verify"
+  | "evals"
   | "report";
 
 export interface PipelineEvent {
@@ -275,6 +317,11 @@ export interface Investigator {
 
 export type AgentId =
   | "log-analyzer"
+  | "classifier"
+  | "crash-agent"
+  | "network-agent"
+  | "database-agent"
+  | "flutter-agent"
   | "code-investigator"
   | "git-investigator"
   | "dependency-analyst"
@@ -373,12 +420,24 @@ export interface GitSuspect {
   reasons: string[];
 }
 
+/** Ranked git regression: when the bug likely appeared. */
+export interface GitRegression {
+  commit: GitSuspect;
+  filesChanged: string[];
+  changed: string[];
+  diffExcerpt?: string;
+  pullRequest?: PullRequestEvidence;
+  confidence: number;
+  summary: string;
+}
+
 /** Output of the Git Investigator: commits/PRs that likely introduced the problem. */
 export interface GitInvestigation {
   evidence: GitEvidence;
   pullRequests: PullRequestEvidence[];
   suspects: GitSuspect[];
   introducing?: GitSuspect;
+  regression?: GitRegression;
   summary: string;
   handoff: string[];
 }
@@ -407,7 +466,38 @@ export interface DependencyAnalysis {
   handoff: string[];
 }
 
-export type ReproductionMethod = "failing-test" | "related-test" | "test-suite" | "error-as-repro";
+export type ReproductionMethod =
+  | "failing-test"
+  | "related-test"
+  | "test-suite"
+  | "generated-test"
+  | "error-as-repro";
+
+export type ReproductionMatch = "matched" | "partial" | "unmatched" | "not-run";
+
+export interface ReproductionSymptom {
+  summary: string;
+  errorType?: string;
+  errorMessage: string;
+  crashSite?: string;
+  language?: ParsedError["language"];
+  signals: string[];
+}
+
+export interface ReproductionScenario {
+  title: string;
+  setup: string[];
+  action: string;
+  expectedFailure: string;
+}
+
+export interface CapturedFailure {
+  type?: string;
+  message?: string;
+  file?: string;
+  line?: number;
+  excerpt: string;
+}
 
 /** Output of the Reproduction Agent: how to reproduce the issue. */
 export interface ReproductionAnalysis {
@@ -417,6 +507,13 @@ export interface ReproductionAnalysis {
   runner?: string;
   relatedTests: RelatedTest[];
   steps: string[];
+  symptoms: ReproductionSymptom;
+  scenario: ReproductionScenario;
+  generatedTest?: ProposedTest;
+  capturedFailure?: CapturedFailure;
+  match: ReproductionMatch;
+  matchDetail: string;
+  confidence: number;
   summary: string;
   handoff: string[];
 }
@@ -438,14 +535,52 @@ export interface RankedCause {
   likelihood: number;
 }
 
-/** Output of the Root Cause Agent: ranked possible causes. */
+/** Output of the Root Cause Agent: ranked possible causes plus an evidence graph. */
 export interface CauseAnalysis {
   causes: RankedCause[];
   leading?: RankedCause;
   confidence: number;
   affectedFiles: string[];
+  graph: EvidenceGraph;
   summary: string;
   handoff: string[];
+}
+
+export type EvidenceGraphNodeKind =
+  | "crash"
+  | "function"
+  | "repository"
+  | "api"
+  | "source"
+  | "null-value"
+  | "commit"
+  | "pr"
+  | "dependency"
+  | "environment";
+
+export interface EvidenceGraphNode {
+  id: string;
+  kind: EvidenceGraphNodeKind;
+  label: string;
+  detail?: string;
+}
+
+export interface EvidenceCheck {
+  id: string;
+  label: string;
+  present: boolean;
+  supports: boolean;
+  detail: string;
+}
+
+/** Causal chain from the crash to the claimed root cause, with supporting and contradicting evidence. */
+export interface EvidenceGraph {
+  claim: string;
+  confidence: number;
+  nodes: EvidenceGraphNode[];
+  supporting: EvidenceCheck[];
+  contradicting: EvidenceCheck[];
+  summary: string;
 }
 
 export type FixStrategy = "optional-chain" | "nullish-default" | "investigator" | "dependency-install" | "none";
@@ -517,6 +652,160 @@ export interface IncidentReport {
   body: string;
   summary: string;
   handoff: string[];
+  production?: ProductionIncident;
+}
+
+export type FailureFamily = "runtime" | "build" | "logic" | "dependency" | "other";
+
+export type FailureCategory =
+  | "runtime-crash"
+  | "build-failure"
+  | "dependency-issue"
+  | "api-backend-issue"
+  | "database-issue"
+  | "ui-issue"
+  | "state-management-issue"
+  | "performance-issue"
+  | "concurrency-race"
+  | "configuration-environment"
+  | "security-issue";
+
+export interface FailureClassification {
+  family: FailureFamily;
+  category: FailureCategory;
+  subtype?: string;
+  confidence: number;
+  signals: string[];
+  routedAgents: AgentId[];
+  summary: string;
+}
+
+export interface EnvironmentMismatch {
+  tool: string;
+  expected: string;
+  actual: string;
+}
+
+export interface EnvironmentAnalysis {
+  local: RuntimeContext;
+  baseline?: RuntimeContext;
+  mismatches: EnvironmentMismatch[];
+  summary: string;
+}
+
+export interface CrashAnalysis {
+  kind: "null-crash" | "anr" | "exception" | "unknown";
+  crashSite?: string;
+  exceptionType?: string;
+  summary: string;
+  handoff: string[];
+}
+
+export interface NetworkAnalysis {
+  protocol?: string;
+  status?: string;
+  endpoint?: string;
+  summary: string;
+  handoff: string[];
+}
+
+export interface DatabaseAnalysis {
+  engine?: string;
+  operation?: string;
+  summary: string;
+  handoff: string[];
+}
+
+export interface FlutterAnalysis {
+  usesBloc: boolean;
+  usesDio: boolean;
+  usesDrift: boolean;
+  usesDi: boolean;
+  usesPlatformChannels: boolean;
+  widgets: string[];
+  blocs: string[];
+  summary: string;
+  handoff: string[];
+}
+
+export interface SpecialistFindings {
+  crash?: CrashAnalysis;
+  network?: NetworkAnalysis;
+  database?: DatabaseAnalysis;
+  flutter?: FlutterAnalysis;
+}
+
+export interface BlastRadiusNode {
+  name: string;
+  kind: "symbol" | "file" | "bloc" | "screen";
+  impact: "high" | "low";
+}
+
+export interface BlastRadiusAnalysis {
+  origin: string;
+  usedBy: BlastRadiusNode[];
+  high: string[];
+  low: string[];
+  summary: string;
+}
+
+export interface IncidentMemoryEntry {
+  id: string;
+  createdAt: string;
+  errorType?: string;
+  errorMessage: string;
+  category: FailureCategory;
+  rootCause: string;
+  fix: string;
+  resolution: string;
+  files: string[];
+}
+
+export interface MemoryMatch {
+  entry: IncidentMemoryEntry;
+  score: number;
+}
+
+export interface DebuggingMemory {
+  stored: boolean;
+  matches: MemoryMatch[];
+  summary: string;
+}
+
+export interface ProductionIncident {
+  source?: "crashlytics" | "sentry" | "logs" | "local";
+  version?: string;
+  affectedUsers?: number;
+  firstSeen?: string;
+  groupedCount?: number;
+  likelyCause: string;
+  confidence: number;
+  recommendedAction: "rollback" | "hotfix" | "investigate";
+  summary: string;
+}
+
+export interface EvalCaseResult {
+  id: string;
+  title: string;
+  passed: boolean;
+  detail: string;
+  durationMs: number;
+}
+
+export interface EvalMetrics {
+  rootCauseAccuracy: number;
+  reproductionRate: number;
+  fixSuccessRate: number;
+  regressionTestRate: number;
+  falsePositiveRate: number;
+  avgDebugTimeMs: number;
+  avgIterations: number;
+}
+
+export interface EvalRun {
+  cases: EvalCaseResult[];
+  metrics: EvalMetrics;
+  summary: string;
 }
 
 export type SandboxKind = "worktree" | "clone" | "copy";

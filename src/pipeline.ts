@@ -1,7 +1,13 @@
 import { collectEvidence } from "./collectors/index.js";
+import { analyzeEnvironment, loadBaselineEnv } from "./collectors/runtime.js";
 import { applyEdits, restoreFiles, snapshotFiles } from "./analysis/patch.js";
+import { attemptOutcome, attemptSummary } from "./analysis/attempts.js";
+import { buildBlastRadius } from "./analysis/blast-radius.js";
+import { recallIncidents, rememberIncident } from "./analysis/memory.js";
+import { buildProductionIncident } from "./analysis/production.js";
 import { createInvestigator } from "./llm/index.js";
 import { LogAnalyzerAgent } from "./agents/log-analyzer.js";
+import { ClassifierAgent } from "./agents/classifier-agent.js";
 import { CodeInvestigatorAgent } from "./agents/code-investigator.js";
 import { GitInvestigatorAgent } from "./agents/git-investigator.js";
 import { DependencyAnalystAgent } from "./agents/dependency-analyst.js";
@@ -11,6 +17,7 @@ import { FixAgent } from "./agents/fix-agent.js";
 import { TestAgent } from "./agents/test-agent.js";
 import { ValidationAgent } from "./agents/validation-agent.js";
 import { IncidentAgent } from "./agents/incident-agent.js";
+import { runRoutedSpecialists } from "./agents/specialists.js";
 import { loadConfig, resolveRepoPath } from "./config.js";
 import { renderMarkdownReport, writeReports } from "./report/markdown.js";
 import type {
@@ -30,66 +37,110 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   const repoPath = resolveRepoPath(options.repoPath || input.repoPath);
   const bug: BugInput = { ...input, repoPath };
   const emit = (event: PipelineEvent) => options.onEvent?.(event);
-  const maxIterations = Math.max(1, options.maxIterations ?? 2);
+  const maxIterations = Math.max(1, options.maxIterations ?? 3);
   const runTests = options.runTests !== false;
   const apply = Boolean(options.apply);
   const config = loadConfig(options);
   const investigator: Investigator =
     options.investigatorInstance ?? createInvestigator({ ...options, repoPath }, config);
-  const logAnalyzer = new LogAnalyzerAgent();
   const agentRuns: AgentRun[] = [];
 
   emit({
     stage: "log-analyzer",
-    agent: logAnalyzer.name,
-    message: `${logAnalyzer.responsibility}...`,
+    agent: "Log Analyzer",
+    message: "Understand logs, exceptions and stack traces...",
   });
-  const { result: logAnalysis, run: logRun } = await logAnalyzer.run({ input: bug });
+  const { result: logAnalysis, run: logRun } = await new LogAnalyzerAgent().run({ input: bug });
   agentRuns.push(logRun);
+
+  emit({
+    stage: "classifier",
+    agent: "Failure Classifier",
+    message: "Classify the failure before investigation...",
+  });
+  const { result: classification, run: classRun } = await new ClassifierAgent().run({ input: bug, logAnalysis });
+  agentRuns.push(classRun);
+
+  emit({
+    stage: "environment",
+    message: "Collect toolchain, OS, flavor, and git environment...",
+  });
+  const evidence = await collectEvidence(bug, logAnalysis);
+  const baseline = await loadBaselineEnv(options.baselineEnvPath);
+  const environment = analyzeEnvironment({
+    local: evidence.runtime,
+    extraContext: bug.extraContext,
+    baseline,
+  });
+  evidence.classification = classification;
+  evidence.environment = environment;
+
+  emit({
+    stage: "crash-agent",
+    agent: "Debugging Orchestrator",
+    message: `Routing ${classification.routedAgents.join(", ") || "core agents"}...`,
+  });
+  const { findings: specialists, runs: specialistRuns } = await runRoutedSpecialists(
+    { input: bug, logAnalysis, classification, environment },
+    classification.routedAgents,
+  );
+  agentRuns.push(...specialistRuns);
+  evidence.specialists = specialists;
 
   emit({
     stage: "code-investigator",
     agent: "Code Investigator",
     message: "Trace the error through the codebase...",
   });
-  const codeInvestigator = new CodeInvestigatorAgent();
-  const { result: codeInvestigation, run: codeRun } = await codeInvestigator.run({
+  const { result: codeInvestigation, run: codeRun } = await new CodeInvestigatorAgent().run({
     input: bug,
     logAnalysis,
+    classification,
+    specialists,
   });
   agentRuns.push(codeRun);
 
   emit({
     stage: "git-investigator",
     agent: "Git Investigator",
-    message: "Find commits/PRs that introduced the problem...",
+    message: "When did this bug appear? Blame, file changes, introducing commit...",
   });
   emit({
     stage: "dependency-analyst",
     agent: "Dependency Analyst",
     message: "Detect dependency/version-related issues...",
   });
-  const gitInvestigator = new GitInvestigatorAgent();
-  const dependencyAnalyst = new DependencyAnalystAgent();
   const [{ result: gitInvestigation, run: gitRun }, { result: dependencyAnalysis, run: depRun }] = await Promise.all([
-    gitInvestigator.run({ input: bug, logAnalysis, codeInvestigation }),
-    dependencyAnalyst.run({ input: bug, logAnalysis, codeInvestigation }),
+    new GitInvestigatorAgent().run({ input: bug, logAnalysis, codeInvestigation }),
+    new DependencyAnalystAgent().run({ input: bug, logAnalysis, codeInvestigation }),
   ]);
   agentRuns.push(gitRun, depRun);
 
-  emit({ stage: "collect", message: "Collecting remaining evidence (source, git, PRs, tests, dependencies, runtime)..." });
-  const evidence = await collectEvidence(bug, logAnalysis);
   evidence.codeInvestigation = codeInvestigation;
   evidence.gitInvestigation = gitInvestigation;
   evidence.dependencyAnalysis = dependencyAnalysis;
 
   emit({
+    stage: "memory",
+    message: "Search previous incidents for the same pattern...",
+  });
+  let memory = await recallIncidents({
+    repoPath,
+    errorType: evidence.error.type,
+    errorMessage: evidence.error.message,
+    category: classification.category,
+    files: codeInvestigation.origin ? [codeInvestigation.origin.file] : [],
+  });
+  evidence.memory = memory;
+
+  emit({
     stage: "reproduction-agent",
     agent: "Reproduction Agent",
-    message: runTests ? "Determine how to reproduce the issue..." : "Planning reproduction (live run skipped)...",
+    message: runTests
+      ? "Can I reproduce this bug? Understand symptoms, run the scenario, compare the failure..."
+      : "Planning reproduction (live run skipped)...",
   });
-  const reproductionAgent = new ReproductionAgent();
-  const { result: reproductionAnalysis, run: reproRun } = await reproductionAgent.run({
+  const { result: reproductionAnalysis, run: reproRun } = await new ReproductionAgent().run({
     input: bug,
     logAnalysis,
     codeInvestigation,
@@ -105,10 +156,9 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   emit({
     stage: "root-cause-agent",
     agent: "Root Cause Agent",
-    message: "Build and rank possible causes...",
+    message: "Build an evidence graph and rank possible causes...",
   });
-  const rootCauseAgent = new RootCauseAgent();
-  const { result: causeAnalysis, run: causeRun } = await rootCauseAgent.run({
+  const { result: causeAnalysis, run: causeRun } = await new RootCauseAgent().run({
     input: bug,
     logAnalysis,
     codeInvestigation,
@@ -116,6 +166,8 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     dependencyAnalysis,
     evidence,
     reproduction: reproductionAnalysis,
+    classification,
+    specialists,
   });
   agentRuns.push(causeRun);
   evidence.causeAnalysis = causeAnalysis;
@@ -130,16 +182,26 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   const validationAgent = new ValidationAgent();
 
   for (let index = 0; index < maxIterations; index += 1) {
-    emit({ stage: "analyze", message: `Root-cause analysis (${investigator.name}, pass ${index + 1}/${maxIterations})...` });
-    const rootCause = await investigator.analyze(bug, evidence, reproduction);
+    const attempt = index + 1;
+    const retryInput = lastFailure
+      ? { ...bug, extraContext: [bug.extraContext, `Previous patch failed:\n${lastFailure}`].filter(Boolean).join("\n") }
+      : bug;
+
+    emit({
+      stage: "analyze",
+      message: lastFailure
+        ? `Attempt ${attempt}: investigate failure and modify patch...`
+        : `Diagnosis → patch (${investigator.name}, attempt ${attempt}/${maxIterations})...`,
+    });
+    const rootCause = await investigator.analyze(retryInput, evidence, reproduction);
 
     emit({
       stage: "fix-agent",
       agent: "Fix Agent",
-      message: "Generate a minimal code fix...",
+      message: lastFailure ? "Modify patch from the failing test output..." : "Generate a minimal code fix...",
     });
     const { result: fixAnalysis, run: fixRun } = await fixAgent.run({
-      input: bug,
+      input: retryInput,
       logAnalysis,
       codeInvestigation,
       gitInvestigation,
@@ -150,6 +212,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
       rootCause,
       investigator,
       previousFailure: lastFailure,
+      classification,
     });
     agentRuns.push(fixRun);
 
@@ -167,10 +230,10 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     emit({
       stage: "test-agent",
       agent: "Test Agent",
-      message: apply && runTests ? "Create/run tests against the fix..." : "Planning tests (live run skipped until --apply)...",
+      message: apply && runTests ? "Run tests against the patch..." : "Planning tests (live run skipped until --apply)...",
     });
     const { result: testAnalysis, run: testRun } = await testAgent.run({
-      input: bug,
+      input: retryInput,
       logAnalysis,
       codeInvestigation,
       evidence,
@@ -185,13 +248,41 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     lastTestAnalysis = testAnalysis;
     let verification = testAnalysis.verification;
 
+    const outcome = attemptOutcome(verification);
+    emit({
+      stage: "verify",
+      message: attemptSummary(attempt, outcome),
+    });
+
+    const canRetry =
+      apply && Boolean(snapshot) && verification.testsRan && !verification.passed && index < maxIterations - 1;
+    if (canRetry && snapshot) {
+      emit({ stage: "verify", message: "Tests failed — restoring files and investigating..." });
+      await restoreFiles(snapshot);
+      lastFailure = verification.output || verification.summary;
+      verification = {
+        ...verification,
+        summary: `${verification.summary} Files restored; retrying with the new failure output.`,
+      };
+    }
+
+    if (outcome === "tests-passed") {
+      emit({
+        stage: "test-agent",
+        agent: "Test Agent",
+        message: testAnalysis.proposedTest
+          ? `Regression test: ${testAnalysis.proposedTest.path}`
+          : "Regression coverage already present.",
+      });
+    }
+
     emit({
       stage: "validation-agent",
       agent: "Validation Agent",
-      message: "Check whether the fix actually resolves the issue...",
+      message: outcome === "tests-passed" ? "Final verification..." : "Check whether the fix actually resolves the issue...",
     });
     const { result: validationAnalysis, run: validationRun } = await validationAgent.run({
-      input: bug,
+      input: retryInput,
       logAnalysis,
       codeInvestigation,
       dependencyAnalysis,
@@ -205,17 +296,15 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     evidence.validationAnalysis = validationAnalysis;
     lastValidationAnalysis = validationAnalysis;
 
-    if (apply && snapshot && verification.testsRan && !verification.passed && index < maxIterations - 1) {
-      emit({ stage: "verify", message: "Verification failed; restoring files and iterating..." });
-      await restoreFiles(snapshot);
-      lastFailure = verification.output || verification.summary;
-      verification = {
-        ...verification,
-        summary: `${verification.summary} Files restored; retrying with the new failure output.`,
-      };
-    }
-
-    iterations.push({ index, rootCause, fix, verification });
+    iterations.push({
+      index,
+      attempt,
+      outcome,
+      summary: attemptSummary(attempt, outcome),
+      rootCause,
+      fix,
+      verification,
+    });
 
     if (!apply || verification.passed || !verification.testsRan) {
       break;
@@ -228,12 +317,41 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   }
 
   emit({
+    stage: "blast-radius",
+    message: "What else could this change break?",
+  });
+  const blastRadius = buildBlastRadius({
+    codeInvestigation,
+    affectedFiles: last.rootCause.affectedFiles,
+  });
+  evidence.blastRadius = blastRadius;
+
+  memory = await rememberIncident({
+    repoPath,
+    errorType: evidence.error.type,
+    errorMessage: evidence.error.message,
+    category: classification.category,
+    rootCause: last.rootCause.rootCause,
+    fix: last.fix.summary,
+    resolution: lastValidationAnalysis.summary,
+    files: last.rootCause.affectedFiles,
+  });
+  evidence.memory = memory;
+
+  const production = buildProductionIncident({
+    bug,
+    rootCause: last.rootCause,
+    gitInvestigation,
+    groupedCount: memory.matches.length || undefined,
+    confidence: causeAnalysis.confidence,
+  });
+
+  emit({
     stage: "incident-agent",
     agent: "Incident Agent",
-    message: "Produce an engineer-friendly incident report...",
+    message: production ? "Production incident mode: group crashes, version, first occurrence..." : "Produce an engineer-friendly incident report...",
   });
-  const incidentAgent = new IncidentAgent();
-  const { result: incidentReport, run: incidentRun } = await incidentAgent.run({
+  const { result: incidentReport, run: incidentRun } = await new IncidentAgent().run({
     input: bug,
     logAnalysis,
     codeInvestigation,
@@ -247,6 +365,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     testAnalysis: lastTestAnalysis,
     validationAnalysis: lastValidationAnalysis,
   });
+  if (production) incidentReport.production = production;
   agentRuns.push(incidentRun);
   evidence.incidentReport = incidentReport;
 
@@ -263,6 +382,8 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   if (apply && lastValidationAnalysis.resolved) {
     notes.push("Validation Agent confirmed the original issue is resolved.");
   }
+  if (environment.mismatches.length) notes.push(environment.summary);
+  if (memory.matches.length) notes.push(memory.summary);
 
   const report: DebuggingReport = {
     title: `Debugging report: ${evidence.error.type ?? "Error"}: ${truncateTitle(evidence.error.message)}`,
@@ -287,6 +408,12 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     testAnalysis: lastTestAnalysis,
     validationAnalysis: lastValidationAnalysis,
     incidentReport,
+    classification,
+    environment,
+    specialists,
+    blastRadius,
+    memory,
+    production,
   };
 
   emit({ stage: "report", message: "Writing debugging report..." });

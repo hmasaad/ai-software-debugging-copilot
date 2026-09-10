@@ -8,3 +8,4 @@ coverage/
 debug-report.md
 debug-report.json
 reports/
+.debug-copilot/

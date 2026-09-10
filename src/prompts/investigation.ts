@@ -54,6 +54,11 @@ export function buildEvidenceBrief(
         : "",
       evidence.logAnalysis?.handoff.length ? `Handoff:\n${evidence.logAnalysis.handoff.map((h) => `- ${h}`).join("\n")}` : "",
       "",
+      `## Failure classification`,
+      evidence.classification
+        ? `${evidence.classification.summary} (${Math.round(evidence.classification.confidence * 100)}%) route=${evidence.classification.routedAgents.join(",")}`
+        : "",
+      "",
       `## Code Investigator`,
       evidence.codeInvestigation?.summary ?? "",
       evidence.codeInvestigation?.trace.length
@@ -70,9 +75,28 @@ export function buildEvidenceBrief(
       "",
       `## Git Investigator`,
       evidence.gitInvestigation?.summary ?? "",
-      evidence.gitInvestigation?.introducing
-        ? `Likely introducing commit: ${evidence.gitInvestigation.introducing.sha.slice(0, 8)} ${evidence.gitInvestigation.introducing.author} (${evidence.gitInvestigation.introducing.date}): ${evidence.gitInvestigation.introducing.subject}`
-        : "",
+      evidence.gitInvestigation?.regression
+        ? [
+            "Likely introduced by:",
+            `Commit: ${evidence.gitInvestigation.regression.commit.sha.slice(0, 7)}`,
+            `Author: ${evidence.gitInvestigation.regression.commit.author}`,
+            `PR: ${evidence.gitInvestigation.regression.pullRequest ? `#${evidence.gitInvestigation.regression.pullRequest.number}` : "none"}`,
+            evidence.gitInvestigation.regression.changed.length
+              ? `Changed:\n${evidence.gitInvestigation.regression.changed.map((file) => `- ${file}`).join("\n")}`
+              : "",
+            `Confidence: ${Math.round(evidence.gitInvestigation.regression.confidence * 100)}%`,
+            evidence.gitInvestigation.regression.pullRequest?.title
+              ? `PR inspection: #${evidence.gitInvestigation.regression.pullRequest.number} ${evidence.gitInvestigation.regression.pullRequest.title}`
+              : "",
+            evidence.gitInvestigation.regression.pullRequest?.body
+              ? evidence.gitInvestigation.regression.pullRequest.body.split("\n").slice(0, 8).join("\n")
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : evidence.gitInvestigation?.introducing
+          ? `Likely introducing commit: ${evidence.gitInvestigation.introducing.sha.slice(0, 8)} ${evidence.gitInvestigation.introducing.author} (${evidence.gitInvestigation.introducing.date}): ${evidence.gitInvestigation.introducing.subject}`
+          : "",
       evidence.gitInvestigation?.suspects.length
         ? `Suspects:\n${evidence.gitInvestigation.suspects
             .map((c) => `- ${c.sha.slice(0, 8)} ${c.date} ${c.author}: ${c.subject} (${c.reasons.join("; ")})`)
@@ -99,7 +123,19 @@ export function buildEvidenceBrief(
       evidence.reproductionAnalysis?.method
         ? `Method: ${evidence.reproductionAnalysis.method}`
         : "",
+      evidence.reproductionAnalysis?.match
+        ? `Match: ${evidence.reproductionAnalysis.match} (${evidence.reproductionAnalysis.matchDetail})`
+        : "",
+      evidence.reproductionAnalysis?.symptoms?.summary
+        ? `Symptoms: ${evidence.reproductionAnalysis.symptoms.summary}`
+        : "",
+      evidence.reproductionAnalysis?.scenario?.title
+        ? `Scenario: ${evidence.reproductionAnalysis.scenario.title}`
+        : "",
       evidence.reproductionAnalysis?.command ?? (reproduction.command ? `Command: ${reproduction.command}` : ""),
+      evidence.reproductionAnalysis?.generatedTest
+        ? `Generated test: ${evidence.reproductionAnalysis.generatedTest.path}`
+        : "",
       evidence.reproductionAnalysis?.steps.length
         ? `Steps:\n${evidence.reproductionAnalysis.steps.map((step) => `- ${step}`).join("\n")}`
         : "",
@@ -109,6 +145,15 @@ export function buildEvidenceBrief(
       "",
       `## Root Cause Agent`,
       evidence.causeAnalysis?.summary ?? "",
+      evidence.causeAnalysis?.graph
+        ? `Evidence graph: ${evidence.causeAnalysis.graph.nodes.map((node) => node.label).join(" → ")}\nClaim: ${evidence.causeAnalysis.graph.claim} (${Math.round(evidence.causeAnalysis.graph.confidence * 100)}%)\nSupporting:\n${evidence.causeAnalysis.graph.supporting
+            .map((check) => `- ${check.present && check.supports ? "yes" : "no"} ${check.label}: ${check.detail}`)
+            .join("\n")}\nContradicting:\n${
+            evidence.causeAnalysis.graph.contradicting.length
+              ? evidence.causeAnalysis.graph.contradicting.map((check) => `- ${check.label}: ${check.detail}`).join("\n")
+              : "- None"
+          }`
+        : "",
       evidence.causeAnalysis?.causes.length
         ? `Ranked causes:\n${evidence.causeAnalysis.causes
             .map((cause) => `- ${cause.id} ${cause.kind} (${cause.likelihood}): ${cause.description}`)

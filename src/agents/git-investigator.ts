@@ -1,14 +1,24 @@
-import { collectGitEvidence } from "../collectors/git.js";
-import { collectPullRequests } from "../collectors/github.js";
+import { buildGitRegression, crashFileOverlap, matchListedPullRequest, parsePrNumber } from "../analysis/git-regression.js";
+import { collectGitEvidence, listCommitFiles, showCommitDiff } from "../collectors/git.js";
+import { collectPullRequests, findPullRequestForCommit, inspectPullRequest } from "../collectors/github.js";
 import { tryCommand } from "../exec.js";
-import type { AgentRun, GitCommit, GitInvestigation, GitSuspect, PullRequestEvidence } from "../types.js";
+import type {
+  AgentRun,
+  CodeInvestigation,
+  GitCommit,
+  GitInvestigation,
+  GitSuspect,
+  LogAnalysis,
+  PullRequestEvidence,
+  StackFrame,
+} from "../types.js";
 import { LogAnalyzerAgent } from "./log-analyzer.js";
 import { GIT_INVESTIGATOR, type AgentContext, type SpecialistAgent } from "./types.js";
 
 const gitPager = { GIT_PAGER: "cat", PAGER: "cat" };
 
 /**
- * Git Investigator — finds commits and PRs that likely introduced the problem.
+ * Git Investigator — answers “when did this bug appear?” via blame, history, and PR inspection.
  */
 export class GitInvestigatorAgent implements SpecialistAgent<GitInvestigation> {
   readonly id = GIT_INVESTIGATOR.id;
@@ -33,8 +43,9 @@ export class GitInvestigatorAgent implements SpecialistAgent<GitInvestigation> {
 
   async analyze(ctx: AgentContext): Promise<GitInvestigation> {
     const logAnalysis = ctx.logAnalysis ?? (await new LogAnalyzerAgent().analyze(ctx.input));
-    const frames = logAnalysis.error.frames;
-    const [evidence, pullRequests, pickaxe] = await Promise.all([
+    const frames = investigationFrames(logAnalysis, ctx.codeInvestigation);
+    const crashFiles = uniqueCrashFiles(frames);
+    const [evidence, listedPrs, pickaxe] = await Promise.all([
       collectGitEvidence(ctx.input.repoPath, frames),
       collectPullRequests(ctx.input.repoPath, frames),
       collectPickaxe(ctx.input.repoPath, ctx.codeInvestigation?.suspects ?? []),
@@ -44,13 +55,41 @@ export class GitInvestigatorAgent implements SpecialistAgent<GitInvestigation> {
       blame: evidence.blame,
       commits: evidence.commitsTouchingSuspects.concat(evidence.recentCommits),
       pickaxe,
-      pullRequests,
+      pullRequests: listedPrs,
     });
     const introducing = suspects[0];
-    const summary = buildGitSummary(evidence, introducing, pullRequests);
-    const handoff = buildGitHandoff(introducing, pullRequests, evidence);
 
-    return { evidence, pullRequests, suspects, introducing, summary, handoff };
+    let pullRequests = listedPrs;
+    let regression: GitInvestigation["regression"];
+
+    if (introducing && evidence.available) {
+      const filesChanged = await listCommitFiles(ctx.input.repoPath, introducing.sha);
+      const overlap = crashFileOverlap(filesChanged, crashFiles);
+      const diffExcerpt =
+        (await showCommitDiff(ctx.input.repoPath, introducing.sha, overlap.length ? overlap : filesChanged)) ||
+        undefined;
+      const pullRequest = await resolveIntroducingPullRequest(
+        ctx.input.repoPath,
+        introducing,
+        listedPrs,
+        crashFiles,
+      );
+      if (pullRequest) {
+        pullRequests = [pullRequest, ...listedPrs.filter((pr) => pr.number !== pullRequest.number)];
+      }
+      regression = buildGitRegression({
+        commit: introducing,
+        filesChanged,
+        crashFiles,
+        diffExcerpt,
+        pullRequest,
+      });
+    }
+
+    const summary = buildGitSummary(evidence, introducing, regression);
+    const handoff = buildGitHandoff(introducing, regression, evidence);
+
+    return { evidence, pullRequests, suspects, introducing, regression, summary, handoff };
   }
 }
 
@@ -118,6 +157,54 @@ export function rankGitSuspects(input: {
     .slice(0, 8);
 }
 
+async function resolveIntroducingPullRequest(
+  repoPath: string,
+  introducing: GitSuspect,
+  listed: PullRequestEvidence[],
+  crashFiles: string[],
+): Promise<PullRequestEvidence | undefined> {
+  let pullRequest = matchListedPullRequest(listed, crashFiles, introducing.subject);
+  const numbered = parsePrNumber(introducing.subject);
+  if (!pullRequest && numbered) {
+    pullRequest = await inspectPullRequest(repoPath, numbered);
+  }
+  if (!pullRequest) {
+    pullRequest = await findPullRequestForCommit(repoPath, introducing.sha);
+  } else if (!pullRequest.body) {
+    const inspected = await inspectPullRequest(repoPath, pullRequest.number);
+    if (inspected) {
+      pullRequest = {
+        ...inspected,
+        overlap: pullRequest.overlap ?? inspected.overlap,
+      };
+    }
+  }
+  if (!pullRequest) return undefined;
+  const overlap = crashFileOverlap(pullRequest.files ?? [], crashFiles);
+  return {
+    ...pullRequest,
+    overlap: pullRequest.overlap?.length ? pullRequest.overlap : overlap,
+  };
+}
+
+function investigationFrames(logAnalysis: LogAnalysis, code?: CodeInvestigation): StackFrame[] {
+  const frames = [...logAnalysis.error.frames];
+  const origin = code?.origin;
+  if (!origin?.file) return frames;
+  const already = frames.some((frame) => frame.file === origin.file && frame.line === origin.line);
+  if (already) return frames;
+  frames.unshift({
+    ...origin,
+    inProject: origin.inProject ?? true,
+    raw: origin.raw || origin.file,
+  });
+  return frames;
+}
+
+function uniqueCrashFiles(frames: StackFrame[]): string[] {
+  return [...new Set(frames.filter((frame) => frame.inProject).map((frame) => frame.file))];
+}
+
 async function collectPickaxe(repoPath: string, suspects: string[]): Promise<GitCommit[]> {
   const tokens = suspects.filter((name) => name.length >= 3).slice(0, 3);
   const found: GitCommit[] = [];
@@ -146,26 +233,30 @@ async function collectPickaxe(repoPath: string, suspects: string[]): Promise<Git
 function buildGitSummary(
   evidence: GitInvestigation["evidence"],
   introducing: GitSuspect | undefined,
-  prs: PullRequestEvidence[],
+  regression: GitInvestigation["regression"],
 ): string {
   if (!evidence.available) return "Not a git repository; cannot attribute an introducing commit.";
+  if (regression) return regression.summary;
   if (introducing) {
-    const pr = prs[0] ? ` Related PR #${prs[0].number} ${prs[0].title}.` : "";
-    return `Likely introduced by ${introducing.sha.slice(0, 8)} (${introducing.author}, ${introducing.date}): ${introducing.subject}.${pr}`;
+    return `Likely introduced by ${introducing.sha.slice(0, 8)} (${introducing.author}, ${introducing.date}): ${introducing.subject}.`;
   }
   return `Git history available on ${evidence.branch ?? "HEAD"}; no strong introducing commit ranked.`;
 }
 
 function buildGitHandoff(
   introducing: GitSuspect | undefined,
-  prs: PullRequestEvidence[],
+  regression: GitInvestigation["regression"],
   evidence: GitInvestigation["evidence"],
 ): string[] {
   const notes: string[] = [];
   if (introducing) {
     notes.push(`Inspect commit ${introducing.sha.slice(0, 8)} — ${introducing.subject} (${introducing.reasons.join("; ")}).`);
   }
-  if (prs[0]) notes.push(`Review merged PR #${prs[0].number}: ${prs[0].title}.`);
+  const pr = regression?.pullRequest;
+  if (pr) notes.push(`Inspect PR #${pr.number}: ${pr.title}${pr.url ? ` (${pr.url})` : ""}.`);
+  if (regression?.changed.length) {
+    notes.push(`Changed files: ${regression.changed.map((file) => file.split(/[\\/]/).pop()).join(", ")}.`);
+  }
   if (evidence.blame[0]) {
     const b = evidence.blame[0];
     notes.push(`Blame on crash line: ${b.file}:${b.line} last touched by ${b.author} in ${b.sha}.`);

@@ -93,9 +93,12 @@ describe("autonomous debugger", () => {
     const boxed = renderDebugResult(result.report);
     expect(boxed).toContain("DEBUGGING RESULT");
     expect(boxed).toContain("Root Cause:");
-    expect(boxed).toContain("item.qty");
+    expect(boxed).toContain("Evidence:");
+    expect(boxed).toContain("Stack trace");
     expect(boxed).toContain("✓ Reproduced locally");
+    expect(boxed).toContain("Contradicting evidence:");
     expect(boxed).toContain("Sandbox only");
+    expect(boxed).toContain("Handle missing quantity");
 
     const markdown = renderMarkdownReport(result.report);
     expect(markdown).toContain("Autonomous sandbox");

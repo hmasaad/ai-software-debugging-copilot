@@ -101,6 +101,7 @@ describe("debugBug pipeline", () => {
 
     expect(report.reproduction.reproduced).toBe(true);
     expect(report.agentRuns[0]?.id).toBe("log-analyzer");
+    expect(report.agentRuns.some((run) => run.id === "classifier")).toBe(true);
     expect(report.agentRuns.some((run) => run.id === "code-investigator")).toBe(true);
     expect(report.agentRuns.some((run) => run.id === "git-investigator")).toBe(true);
     expect(report.agentRuns.some((run) => run.id === "dependency-analyst")).toBe(true);
@@ -120,6 +121,9 @@ describe("debugBug pipeline", () => {
     expect(report.causeAnalysis.causes.length).toBeGreaterThan(0);
     expect(report.proposedFix.applied).toBe(true);
     expect(report.verification.passed).toBe(true);
+    expect(report.classification?.category).toBeTruthy();
+    expect(report.iterations[0]?.summary).toMatch(/Attempt 1 → Tests passed/);
+    expect(report.blastRadius?.origin).toBeTruthy();
     expect(await readFile(path.join(fixture.dir, "src/cart.js"), "utf8")).toContain("item.qty ?? 1");
 
     const markdown = renderMarkdownReport(report);
@@ -132,6 +136,8 @@ describe("debugBug pipeline", () => {
     expect(markdown).toContain("Test Agent");
     expect(markdown).toContain("Validation Agent");
     expect(markdown).toContain("Incident Agent");
+    expect(markdown).toContain("Failure classification");
+    expect(markdown).toContain("Patch → test → verify");
     expect(markdown).toContain("Proposed fix");
     expect(markdown).toContain("Verification");
     expect(await readFile(path.join(fixture.dir, "debug-report.md"), "utf8")).toContain("Debugging report");

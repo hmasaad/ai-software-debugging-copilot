@@ -3,6 +3,11 @@ export { debugAutonomously } from "./autonomous/debug.js";
 export { collectEvidence, parseErrorText } from "./collectors/index.js";
 export {
   LogAnalyzerAgent,
+  ClassifierAgent,
+  CrashAgent,
+  NetworkAgent,
+  DatabaseAgent,
+  FlutterAgent,
   CodeInvestigatorAgent,
   GitInvestigatorAgent,
   DependencyAnalystAgent,
@@ -13,6 +18,11 @@ export {
   ValidationAgent,
   IncidentAgent,
   LOG_ANALYZER,
+  CLASSIFIER,
+  CRASH_AGENT,
+  NETWORK_AGENT,
+  DATABASE_AGENT,
+  FLUTTER_AGENT,
   CODE_INVESTIGATOR,
   GIT_INVESTIGATOR,
   DEPENDENCY_ANALYST,
@@ -29,6 +39,15 @@ export { renderInvestigationBoard } from "./board/html.js";
 export { serveInvestigationBoard, startBoardServer } from "./board/serve.js";
 export { createInvestigator, HeuristicInvestigator } from "./llm/index.js";
 export { applyEdits } from "./analysis/patch.js";
+export { buildEvidenceGraph, renderEvidenceGraphAscii } from "./analysis/evidence-graph.js";
+export {
+  buildGitRegression,
+  parsePrNumber,
+  renderGitRegressionAscii,
+} from "./analysis/git-regression.js";
+export { classifyFailure, renderClassificationAscii } from "./analysis/classify.js";
+export { buildBlastRadius, renderBlastRadiusAscii } from "./analysis/blast-radius.js";
+export { runEvalSuite, renderEvalDashboard } from "./evals/run.js";
 export type {
   BugInput,
   DebuggingReport,
@@ -41,13 +60,22 @@ export type {
   LogAnalysis,
   CodeInvestigation,
   GitInvestigation,
+  GitRegression,
   DependencyAnalysis,
   ReproductionAnalysis,
+  ReproductionMatch,
   CauseAnalysis,
+  EvidenceGraph,
   FixAnalysis,
   TestAnalysis,
   ValidationAnalysis,
   IncidentReport,
+  FailureClassification,
+  EnvironmentAnalysis,
+  BlastRadiusAnalysis,
+  DebuggingMemory,
+  ProductionIncident,
+  EvalRun,
   AgentRun,
   AutonomousDebugResult,
   SandboxSession,
