@@ -1,0 +1,154 @@
+import type { BugInput, EvidenceBundle, ReproductionResult } from "../types.js";
+import { truncate } from "../exec.js";
+
+export function buildEvidenceBrief(
+  input: BugInput,
+  evidence: EvidenceBundle,
+  reproduction: ReproductionResult,
+): string {
+  const frames = evidence.error.frames
+    .slice(0, 12)
+    .map((frame) => {
+      const loc = `${frame.file}${frame.line ? `:${frame.line}` : ""}`;
+      const fn = frame.functionName ? ` (${frame.functionName})` : "";
+      return `- ${loc}${fn}${frame.inProject ? " [project]" : ""}`;
+    })
+    .join("\n");
+
+  const snippets = evidence.sourceSnippets
+    .map((snippet) => `### ${snippet.file}${snippet.focusLine ? `:${snippet.focusLine}` : ""}\n\`\`\`\n${snippet.content}\n\`\`\``)
+    .join("\n\n");
+
+  const commits = evidence.git.commitsTouchingSuspects
+    .concat(evidence.git.recentCommits)
+    .slice(0, 10)
+    .map((c) => `- ${c.sha.slice(0, 8)} ${c.date} ${c.author}: ${c.subject}`)
+    .join("\n");
+
+  const blame = evidence.git.blame
+    .map((b) => `- ${b.file}:${b.line} ${b.sha} ${b.author} (${b.date}) ${b.summary}`)
+    .join("\n");
+
+  const prs = evidence.pullRequests
+    .slice(0, 6)
+    .map((pr) => `- #${pr.number} ${pr.title} (${pr.state}) ${pr.url}`)
+    .join("\n");
+
+  const tests = evidence.tests.relatedTests
+    .map((t) => `- ${t.file} — ${t.reason}`)
+    .join("\n");
+
+  const deps = evidence.dependencies.hits
+    .map((d) => `- ${d.name}${d.version ? `@${d.version}` : ""} (${d.source})`)
+    .join("\n");
+
+  return truncate(
+    [
+      `## Log Analyzer`,
+      evidence.logAnalysis?.summary ?? "",
+      evidence.logAnalysis?.crashSite
+        ? `Crash site: ${evidence.logAnalysis.crashSite.file}${evidence.logAnalysis.crashSite.line ? `:${evidence.logAnalysis.crashSite.line}` : ""}`
+        : "",
+      evidence.logAnalysis?.exceptionChain.length
+        ? `Exception chain:\n${evidence.logAnalysis.exceptionChain.map((ex) => `- ${ex.role}: ${ex.type ?? "Error"}: ${ex.message}`).join("\n")}`
+        : "",
+      evidence.logAnalysis?.handoff.length ? `Handoff:\n${evidence.logAnalysis.handoff.map((h) => `- ${h}`).join("\n")}` : "",
+      "",
+      `## Bug`,
+      input.message ? `Message: ${input.message}` : "",
+      `Parsed: ${evidence.error.type ?? "Error"}: ${evidence.error.message}`,
+      evidence.error.language ? `Language: ${evidence.error.language}` : "",
+      input.failingTest ? `Failing test: ${input.failingTest}` : "",
+      input.extraContext ? `Context: ${input.extraContext}` : "",
+      "",
+      `## Stack frames`,
+      frames || "(none parsed)",
+      "",
+      `## Reproduction`,
+      reproduction.summary,
+      reproduction.command ? `Command: ${reproduction.command}` : "",
+      reproduction.output ? `Output:\n${truncate(reproduction.output, 4000)}` : "",
+      "",
+      `## Source`,
+      snippets || "(no source snippets)",
+      "",
+      `## Git`,
+      evidence.git.available
+        ? `Branch ${evidence.git.branch ?? "?"} @ ${evidence.git.head ?? "?"}`
+        : "Not a git repository",
+      evidence.git.status ? `Status:\n${evidence.git.status}` : "",
+      commits ? `Commits:\n${commits}` : "",
+      blame ? `Blame:\n${blame}` : "",
+      "",
+      `## Recent PRs`,
+      prs || "(none or gh unavailable)",
+      "",
+      `## Tests`,
+      `Runner: ${evidence.tests.runner ?? "unknown"}`,
+      `Command: ${evidence.tests.testCommand ?? "unknown"}`,
+      tests || "(no related tests found)",
+      "",
+      `## Dependencies`,
+      deps || "(no overlapping dependencies)",
+      "",
+      `## Runtime`,
+      `${evidence.runtime.os}/${evidence.runtime.arch} node=${evidence.runtime.node ?? "n/a"} python=${evidence.runtime.python ?? "n/a"} ci=${evidence.runtime.ci}`,
+      evidence.runtime.envHints.join(", "),
+      "",
+      `## Logs`,
+      truncate(evidence.logs.excerpt, 3000),
+    ]
+      .filter((line) => line !== "")
+      .join("\n"),
+    24_000,
+  );
+}
+
+export function rcaSystemPrompt(): string {
+  return `You are a staff software engineer performing root-cause analysis.
+Investigate like an engineer: use the evidence, do not speculate beyond it, and rank competing hypotheses.
+Return ONLY valid JSON with this shape:
+{
+  "summary": "one paragraph",
+  "rootCause": "the single most likely root cause",
+  "confidence": 0.0,
+  "hypotheses": [
+    { "id": "H1", "description": "...", "evidence": ["..."], "likelihood": 0.0 }
+  ],
+  "affectedFiles": ["path"],
+  "reproSteps": ["step"]
+}
+confidence and likelihood are numbers between 0 and 1.
+Prefer project frames over framework/library frames.
+Recent git blame + failing tests that overlap a stack frame are strong evidence.`;
+}
+
+export function fixSystemPrompt(): string {
+  return `You are a staff software engineer proposing a minimal, verified-ready fix.
+Return ONLY valid JSON with this shape:
+{
+  "summary": "what the fix does",
+  "rationale": "why this addresses the root cause",
+  "edits": [
+    { "path": "relative/path.ext", "oldString": "exact existing text", "newString": "replacement" }
+  ],
+  "testPlan": ["how to verify"],
+  "risks": ["risk"]
+}
+Rules:
+- oldString must match the file contents in the evidence EXACTLY, including whitespace.
+- Prefer the smallest correct change.
+- Do not change unrelated files.
+- Do not include markdown fences in JSON strings unless they already exist in the source.
+- If you cannot produce a safe edit, return an empty edits array and explain in summary.`;
+}
+
+export function parseJsonObject<T>(text: string): T {
+  const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = stripped.indexOf("{");
+  const end = stripped.lastIndexOf("}");
+  if (start < 0 || end < 0) {
+    throw new Error("Model did not return JSON");
+  }
+  return JSON.parse(stripped.slice(start, end + 1)) as T;
+}

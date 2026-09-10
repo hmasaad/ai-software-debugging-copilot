@@ -1,0 +1,193 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import type { DebuggingReport } from "../types.js";
+
+export function renderMarkdownReport(report: DebuggingReport): string {
+  const e = report.evidence;
+  const rca = report.rootCause;
+  const fix = report.proposedFix;
+
+  const hypotheses = rca.hypotheses
+    .map((h) => `- **${h.id}** (${pct(h.likelihood)}) ${h.description}\n  - Evidence: ${h.evidence.join("; ") || "n/a"}`)
+    .join("\n");
+
+  const frames = e.error.frames
+    .slice(0, 15)
+    .map((f) => `- \`${f.file}${f.line ? `:${f.line}` : ""}\`${f.functionName ? ` — ${f.functionName}` : ""}${f.inProject ? " *(project)*" : ""}`)
+    .join("\n");
+
+  const snippets = e.sourceSnippets
+    .map((s) => `### ${s.file}${s.focusLine ? `:${s.focusLine}` : ""}\n\n\`\`\`${s.language ?? ""}\n${s.content}\n\`\`\``)
+    .join("\n\n");
+
+  const commits = e.git.commitsTouchingSuspects
+    .concat(e.git.recentCommits)
+    .filter((c, i, arr) => arr.findIndex((x) => x.sha === c.sha) === i)
+    .slice(0, 10)
+    .map((c) => `- \`${c.sha.slice(0, 8)}\` ${c.date} ${c.author}: ${c.subject}`)
+    .join("\n");
+
+  const blame = e.git.blame
+    .map((b) => `- \`${b.file}:${b.line}\` ${b.sha} ${b.author} (${b.date}) ${b.summary}`)
+    .join("\n");
+
+  const prs = e.pullRequests
+    .map((pr) => `- [#${pr.number}](${pr.url}) ${pr.title} (${pr.state}${pr.author ? `, ${pr.author}` : ""})`)
+    .join("\n");
+
+  const tests = e.tests.relatedTests.map((t) => `- \`${t.file}\` — ${t.reason}`).join("\n");
+  const deps = e.dependencies.hits.map((d) => `- ${d.name}${d.version ? ` @ ${d.version}` : ""}`).join("\n");
+  const edits = fix.edits
+    .map((edit) => `### ${edit.path}\n\n\`\`\`diff\n- ${oneLine(edit.oldString)}\n+ ${oneLine(edit.newString)}\n\`\`\``)
+    .join("\n\n");
+
+  const iterationNotes = report.iterations
+    .map((it) => {
+      const status = it.verification.passed ? "passed" : it.verification.testsRan ? "failed" : "not run";
+      return `- Pass ${it.index + 1}: ${it.rootCause.investigator} — tests ${status}. ${it.fix.summary}`;
+    })
+    .join("\n");
+
+  return [
+    `# ${report.title}`,
+    "",
+    `_Generated ${report.createdAt} on \`${report.repoPath}\`_`,
+    "",
+    "## Outcome",
+    "",
+    `- **Root cause** (${pct(rca.confidence)} confidence, ${rca.investigator}): ${rca.rootCause}`,
+    `- **Fix:** ${fix.summary}${fix.applied ? " *(applied)*" : " *(not applied)*"}`,
+    `- **Verification:** ${report.verification.summary}`,
+    ...report.notes.map((note) => `- ${note}`),
+    "",
+    report.agentRuns.length
+      ? `## Core agents\n\n${report.agentRuns
+          .map((run) => `- **${run.name}** — ${run.responsibility}\n  ${run.summary}`)
+          .join("\n")}`
+      : "",
+    "",
+    report.logAnalysis
+      ? [
+          "## Log Analyzer",
+          "",
+          report.logAnalysis.summary,
+          report.logAnalysis.crashSite
+            ? `\nCrash site: \`${report.logAnalysis.crashSite.file}${report.logAnalysis.crashSite.line ? `:${report.logAnalysis.crashSite.line}` : ""}\``
+            : "",
+          report.logAnalysis.exceptionChain.length
+            ? `\nException chain:\n${report.logAnalysis.exceptionChain
+                .map((ex) => `- ${ex.role}: \`${ex.type ?? "Error"}\`: ${ex.message}`)
+                .join("\n")}`
+            : "",
+          report.logAnalysis.handoff.length
+            ? `\nHandoff:\n${report.logAnalysis.handoff.map((note) => `- ${note}`).join("\n")}`
+            : "",
+        ].join("\n")
+      : "",
+    "",
+    "## Error",
+    "",
+    `\`\`\`\n${e.error.type ? `${e.error.type}: ` : ""}${e.error.message}\n\`\`\``,
+    "",
+    frames ? `### Stack frames\n\n${frames}` : "",
+    "",
+    "## Reproduction",
+    "",
+    report.reproduction.summary,
+    report.reproduction.command ? `\nCommand: \`${report.reproduction.command}\`` : "",
+    report.reproduction.output ? `\n\n\`\`\`\n${report.reproduction.output}\n\`\`\`` : "",
+    "",
+    "## Root cause analysis",
+    "",
+    rca.summary,
+    "",
+    hypotheses ? `### Hypotheses\n\n${hypotheses}` : "",
+    "",
+    rca.affectedFiles.length ? `Affected files: ${rca.affectedFiles.map((f) => `\`${f}\``).join(", ")}` : "",
+    rca.reproSteps.length ? `\n### Repro steps\n\n${rca.reproSteps.map((s) => `- ${s}`).join("\n")}` : "",
+    "",
+    "## Proposed fix",
+    "",
+    fix.rationale,
+    "",
+    edits || "_No file edits were generated._",
+    "",
+    fix.testPlan.length ? `### Test plan\n\n${fix.testPlan.map((s) => `- ${s}`).join("\n")}` : "",
+    fix.risks.length ? `\n### Risks\n\n${fix.risks.map((s) => `- ${s}`).join("\n")}` : "",
+    fix.applyErrors.length ? `\n### Apply errors\n\n${fix.applyErrors.map((s) => `- ${s}`).join("\n")}` : "",
+    "",
+    "## Verification",
+    "",
+    report.verification.command ? `Command: \`${report.verification.command}\`` : "",
+    "",
+    report.verification.output ? `\`\`\`\n${report.verification.output}\n\`\`\`` : report.verification.summary,
+    "",
+    iterationNotes ? `### Iterations\n\n${iterationNotes}` : "",
+    "",
+    "## Evidence",
+    "",
+    "### Source",
+    "",
+    snippets || "_No source snippets._",
+    "",
+    "### Git history",
+    "",
+    e.git.available ? `Branch \`${e.git.branch ?? "?"}\` @ \`${e.git.head ?? "?"}\`` : "Git history unavailable.",
+    e.git.status ? `\n\nWorking tree:\n\`\`\`\n${e.git.status}\n\`\`\`` : "",
+    commits ? `\n\n${commits}` : "",
+    blame ? `\n\nBlame:\n${blame}` : "",
+    "",
+    "### Recent PRs",
+    "",
+    prs || "_None collected (install GitHub CLI `gh` and authenticate to include PRs)._",
+    "",
+    "### Tests",
+    "",
+    `Runner: \`${e.tests.runner ?? "unknown"}\` — command: \`${e.tests.testCommand ?? "n/a"}\``,
+    tests ? `\n\n${tests}` : "",
+    "",
+    "### Dependencies",
+    "",
+    deps || "_No overlapping dependencies._",
+    "",
+    "### Runtime context",
+    "",
+    `- OS: ${e.runtime.os}/${e.runtime.arch}`,
+    `- Node: ${e.runtime.node ?? "n/a"}`,
+    `- Python: ${e.runtime.python ?? "n/a"}`,
+    `- CI: ${e.runtime.ci}`,
+    e.runtime.envHints.length ? `- Env: ${e.runtime.envHints.join(", ")}` : "",
+    "",
+    "### Logs",
+    "",
+    e.logs.sources.length ? `Sources: ${e.logs.sources.join(", ")}` : "",
+    "",
+    e.logs.excerpt ? `\`\`\`\n${e.logs.excerpt}\n\`\`\`` : "_No logs._",
+    "",
+  ]
+    .filter((line) => line !== "")
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+export async function writeReports(
+  report: DebuggingReport,
+  paths: { markdownPath?: string; jsonPath?: string },
+): Promise<void> {
+  if (paths.markdownPath) {
+    await mkdir(path.dirname(path.resolve(paths.markdownPath)), { recursive: true });
+    await writeFile(paths.markdownPath, renderMarkdownReport(report), "utf8");
+  }
+  if (paths.jsonPath) {
+    await mkdir(path.dirname(path.resolve(paths.jsonPath)), { recursive: true });
+    await writeFile(paths.jsonPath, JSON.stringify(report, null, 2), "utf8");
+  }
+}
+
+function pct(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function oneLine(text: string): string {
+  return text.replace(/\n/g, "\\n");
+}

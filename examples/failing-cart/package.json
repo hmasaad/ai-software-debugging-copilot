@@ -1,0 +1,9 @@
+{
+  "name": "failing-cart",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test src/cart.test.js",
+    "crash": "node src/crash.js"
+  }
+}
