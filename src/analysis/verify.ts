@@ -5,8 +5,10 @@ export async function verifyFix(
   repoPath: string,
   evidence: EvidenceBundle,
   runTests: boolean,
+  commandOverride?: string,
 ): Promise<VerificationResult> {
-  if (!runTests || !evidence.tests.testCommand) {
+  const command = commandOverride ?? evidence.tests.testCommand;
+  if (!runTests || !command) {
     return {
       testsRan: false,
       passed: false,
@@ -15,7 +17,6 @@ export async function verifyFix(
     };
   }
 
-  const command = evidence.tests.testCommand;
   const [bin, ...args] = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((part) =>
     part.replace(/^['"]|['"]$/g, ""),
   ) ?? [command];

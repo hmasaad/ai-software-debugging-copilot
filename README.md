@@ -55,6 +55,12 @@ The copilot is an **orchestrator**, not one giant debugging prompt. Specialists 
 | **Code Investigator** | Trace the error through the codebase |
 | **Git Investigator** | Find commits/PRs that introduced the problem |
 | **Dependency Analyst** | Detect dependency/version-related issues |
+| **Reproduction Agent** | Determine how to reproduce the issue |
+| **Root Cause Agent** | Build and rank possible causes |
+| **Fix Agent** | Generate a minimal code fix |
+| **Test Agent** | Create/run tests against the fix |
+| **Validation Agent** | Check whether the fix actually resolves the issue |
+| **Incident Agent** | Produce an engineer-friendly incident report |
 
 Log Analyzer runs first. It parses exception chains (`Caused by`, nested errors), finds the crash site (top project frame), counts log levels, extracts timestamps and correlation IDs, and writes a handoff for later stages.
 
@@ -63,6 +69,18 @@ Code Investigator consumes that crash site and walks the source: enclosing funct
 Git Investigator ranks introducing commits with blame on the crash line, pickaxe (`git log -S`) on Code Investigator suspects, and overlapping merged PRs.
 
 Dependency Analyst classifies missing modules, lockfile drift, peer-dep failures, and ESM/CJS mismatches so later stages do not patch application code for an install problem.
+
+Reproduction Agent picks a command (failing test, related test, or the suite), writes replay steps from the crash site, and optionally runs it.
+
+Root Cause Agent ranks competing causes from those briefings — crash site, null deref, introducing commit, dependency, environment — before a patch is written.
+
+Fix Agent turns the leading cause into the smallest search/replace edit (optional chaining, nullish defaults, or an LLM patch). It will not patch application code when Dependency Analyst says the failure is an install/version issue.
+
+Test Agent proposes a regression test around the crashing function and, with `--apply`, runs the suite against the patch.
+
+Validation Agent judges whether the original issue is actually gone: patch applied, crash-site source updated, tests passing, original error absent from output, and a failing-then-passing flip.
+
+Incident Agent writes a SEV-style report (what happened, impact, root cause, fix, validation, timeline, follow-ups) that an engineer can paste into Slack or a postmortem.
 
 Root-cause and fix prompts consume those briefings instead of re-reading raw logs and files from scratch.
 
@@ -181,7 +199,7 @@ Use `--apply` only in a throwaway job or bot branch — the default is report-on
 src/
   cli.ts                 CLI entry
   pipeline.ts            Orchestrator
-  agents/                Specialist agents (Log Analyzer, Code Investigator, Git Investigator, Dependency Analyst)
+  agents/                Specialist agents (Log Analyzer → Incident Agent)
   collectors/            Evidence: source, git, PRs, tests, deps, runtime
   analysis/              Reproduce, patch, verify
   llm/                   heuristic | openai | anthropic | cursor

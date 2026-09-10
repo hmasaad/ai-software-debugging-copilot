@@ -16,45 +16,64 @@ export class HeuristicInvestigator implements Investigator {
     evidence: EvidenceBundle,
     reproduction: ReproductionResult,
   ): Promise<RootCauseAnalysis> {
+    const ranked = evidence.causeAnalysis;
     const projectFrames = evidence.error.frames.filter((frame) => frame.inProject);
     const top = projectFrames[0] ?? evidence.error.frames[0];
     const snippet = evidence.sourceSnippets[0];
     const blame = evidence.git.blame[0];
     const recentHit = evidence.git.commitsTouchingSuspects[0];
 
-    const hypotheses = buildHypotheses(evidence, reproduction, top?.file);
+    const hypotheses = ranked?.causes.length
+      ? ranked.causes.map((cause) => ({
+          id: cause.id,
+          description: cause.description,
+          evidence: cause.evidence,
+          likelihood: cause.likelihood,
+        }))
+      : buildHypotheses(evidence, reproduction, top?.file);
     const best = hypotheses[0];
-    const affectedFiles = unique([
+    const affectedFiles = (ranked?.affectedFiles.length ? ranked.affectedFiles : unique([
       ...evidence.sourceSnippets.map((s) => s.file),
       ...projectFrames.map((f) => f.file).filter((file) => !file.includes("node_modules")),
-    ]).slice(0, 6);
+    ])).slice(0, 6);
 
-    const rootCause = best?.description
-      ?? (top
+    const rootCause =
+      ranked?.leading?.description ??
+      best?.description ??
+      (top
         ? `${evidence.error.type ?? "Error"} originates at ${top.file}${top.line ? `:${top.line}` : ""}${top.functionName ? ` in ${top.functionName}` : ""}.`
         : evidence.error.message);
 
-    let confidence = 0.35;
-    if (top?.inProject) confidence += 0.2;
-    if (snippet) confidence += 0.1;
-    if (blame) confidence += 0.1;
-    if (reproduction.reproduced) confidence += 0.15;
-    if (recentHit) confidence += 0.05;
+    let confidence = ranked?.confidence ?? 0.35;
+    if (!ranked) {
+      if (top?.inProject) confidence += 0.2;
+      if (snippet) confidence += 0.1;
+      if (blame) confidence += 0.1;
+      if (reproduction.reproduced) confidence += 0.15;
+      if (recentHit) confidence += 0.05;
+    }
 
-    const reproSteps = [
-      reproduction.command ? `Run \`${reproduction.command}\`.` : "Replay the failing request or command that produced the stack trace.",
-      top ? `Inspect ${top.file}${top.line ? `:${top.line}` : ""}.` : "Inspect the top project stack frame.",
-    ];
+    const reproSteps =
+      evidence.reproductionAnalysis?.steps.length
+        ? evidence.reproductionAnalysis.steps
+        : [
+            reproduction.command
+              ? `Run \`${reproduction.command}\`.`
+              : "Replay the failing request or command that produced the stack trace.",
+            top ? `Inspect ${top.file}${top.line ? `:${top.line}` : ""}.` : "Inspect the top project stack frame.",
+          ];
 
     return {
-      summary: [
-        `Heuristic analysis of ${evidence.error.type ?? "error"}: ${evidence.error.message}.`,
-        top ? `Primary frame: ${top.file}${top.line ? `:${top.line}` : ""}.` : "No stack frames were parsed.",
-        blame ? `Last change to that line: ${blame.sha} by ${blame.author} (${blame.date}) — ${blame.summary}.` : "",
-        reproduction.summary,
-      ]
-        .filter(Boolean)
-        .join(" "),
+      summary:
+        ranked?.summary ??
+        [
+          `Heuristic analysis of ${evidence.error.type ?? "error"}: ${evidence.error.message}.`,
+          top ? `Primary frame: ${top.file}${top.line ? `:${top.line}` : ""}.` : "No stack frames were parsed.",
+          blame ? `Last change to that line: ${blame.sha} by ${blame.author} (${blame.date}) — ${blame.summary}.` : "",
+          reproduction.summary,
+        ]
+          .filter(Boolean)
+          .join(" "),
       rootCause,
       confidence: clamp(confidence, 0.05, 0.9),
       hypotheses,

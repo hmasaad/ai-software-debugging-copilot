@@ -125,6 +125,12 @@ export interface EvidenceBundle {
   codeInvestigation?: CodeInvestigation;
   gitInvestigation?: GitInvestigation;
   dependencyAnalysis?: DependencyAnalysis;
+  reproductionAnalysis?: ReproductionAnalysis;
+  causeAnalysis?: CauseAnalysis;
+  fixAnalysis?: FixAnalysis;
+  testAnalysis?: TestAnalysis;
+  validationAnalysis?: ValidationAnalysis;
+  incidentReport?: IncidentReport;
 }
 
 export interface ReproductionResult {
@@ -201,6 +207,12 @@ export interface DebuggingReport {
   codeInvestigation: CodeInvestigation;
   gitInvestigation: GitInvestigation;
   dependencyAnalysis: DependencyAnalysis;
+  reproductionAnalysis: ReproductionAnalysis;
+  causeAnalysis: CauseAnalysis;
+  fixAnalysis: FixAnalysis;
+  testAnalysis: TestAnalysis;
+  validationAnalysis: ValidationAnalysis;
+  incidentReport: IncidentReport;
 }
 
 export interface PipelineOptions {
@@ -225,6 +237,12 @@ export type PipelineStage =
   | "code-investigator"
   | "git-investigator"
   | "dependency-analyst"
+  | "reproduction-agent"
+  | "root-cause-agent"
+  | "fix-agent"
+  | "test-agent"
+  | "validation-agent"
+  | "incident-agent"
   | "collect"
   | "reproduce"
   | "analyze"
@@ -250,7 +268,17 @@ export interface Investigator {
   ): Promise<FixProposal>;
 }
 
-export type AgentId = "log-analyzer" | "code-investigator" | "git-investigator" | "dependency-analyst";
+export type AgentId =
+  | "log-analyzer"
+  | "code-investigator"
+  | "git-investigator"
+  | "dependency-analyst"
+  | "reproduction-agent"
+  | "root-cause-agent"
+  | "fix-agent"
+  | "test-agent"
+  | "validation-agent"
+  | "incident-agent";
 
 export interface AgentRun {
   id: AgentId;
@@ -370,6 +398,118 @@ export interface DependencyAnalysis {
   evidence: DependencyEvidence;
   issues: DependencyIssue[];
   likelyDependencyBug: boolean;
+  summary: string;
+  handoff: string[];
+}
+
+export type ReproductionMethod = "failing-test" | "related-test" | "test-suite" | "error-as-repro";
+
+/** Output of the Reproduction Agent: how to reproduce the issue. */
+export interface ReproductionAnalysis {
+  result: ReproductionResult;
+  method: ReproductionMethod;
+  command?: string;
+  runner?: string;
+  relatedTests: RelatedTest[];
+  steps: string[];
+  summary: string;
+  handoff: string[];
+}
+
+export type CauseKind =
+  | "crash-site"
+  | "null-deref"
+  | "introducing-commit"
+  | "dependency"
+  | "environment"
+  | "unreproducible"
+  | "untested";
+
+export interface RankedCause {
+  id: string;
+  kind: CauseKind;
+  description: string;
+  evidence: string[];
+  likelihood: number;
+}
+
+/** Output of the Root Cause Agent: ranked possible causes. */
+export interface CauseAnalysis {
+  causes: RankedCause[];
+  leading?: RankedCause;
+  confidence: number;
+  affectedFiles: string[];
+  summary: string;
+  handoff: string[];
+}
+
+export type FixStrategy = "optional-chain" | "nullish-default" | "investigator" | "dependency-install" | "none";
+
+/** Output of the Fix Agent: a minimal code fix. */
+export interface FixAnalysis {
+  proposal: FixProposal;
+  strategy: FixStrategy;
+  source: "investigator" | "heuristic";
+  summary: string;
+  handoff: string[];
+}
+
+export interface ProposedTest {
+  path: string;
+  content: string;
+  reason: string;
+  created: boolean;
+}
+
+/** Output of the Test Agent: tests created and/or run against the fix. */
+export interface TestAnalysis {
+  verification: VerificationResult;
+  relatedTests: RelatedTest[];
+  proposedTest?: ProposedTest;
+  createdFiles: string[];
+  summary: string;
+  handoff: string[];
+}
+
+export type ValidationVerdict = "resolved" | "likely-resolved" | "unresolved" | "inconclusive";
+
+export interface ValidationCheck {
+  id: string;
+  passed: boolean;
+  detail: string;
+}
+
+/** Output of the Validation Agent: did the fix actually resolve the issue? */
+export interface ValidationAnalysis {
+  verdict: ValidationVerdict;
+  resolved: boolean;
+  checks: ValidationCheck[];
+  residualRisks: string[];
+  summary: string;
+  handoff: string[];
+}
+
+export type IncidentSeverity = "sev-1" | "sev-2" | "sev-3" | "sev-4";
+export type IncidentStatus = "investigating" | "identified" | "monitoring" | "resolved";
+
+export interface IncidentEvent {
+  label: string;
+  detail: string;
+}
+
+/** Output of the Incident Agent: an engineer-friendly incident report. */
+export interface IncidentReport {
+  title: string;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  impact: string;
+  whatHappened: string;
+  rootCause: string;
+  fix: string;
+  validation: string;
+  timeline: IncidentEvent[];
+  followUps: string[];
+  body: string;
   summary: string;
   handoff: string[];
 }

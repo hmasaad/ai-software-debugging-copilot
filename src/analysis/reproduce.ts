@@ -1,15 +1,18 @@
 import { runCommand, truncate } from "../exec.js";
-import type { BugInput, EvidenceBundle, ReproductionResult } from "../types.js";
+import type { BugInput, EvidenceBundle, ReproductionResult, TestEvidence } from "../types.js";
 
 export async function reproduceBug(
   input: BugInput,
   evidence: EvidenceBundle,
   runTests: boolean,
+  commandOverride?: string,
 ): Promise<ReproductionResult> {
-  if (!runTests || !evidence.tests.testCommand) {
+  const command = commandOverride ?? selectTestCommand(input, evidence.tests);
+  if (!runTests || !command) {
     return {
       attempted: false,
       reproduced: Boolean(evidence.error.message && evidence.error.message !== "No error details provided"),
+      command,
       output: "",
       summary: runTests
         ? "No test runner detected; using the provided error as the reproduction."
@@ -17,7 +20,6 @@ export async function reproduceBug(
     };
   }
 
-  const command = selectTestCommand(input, evidence);
   const [bin, ...args] = splitCommand(command);
   if (!bin) {
     return {
@@ -48,20 +50,20 @@ export async function reproduceBug(
   };
 }
 
-function selectTestCommand(input: BugInput, evidence: EvidenceBundle): string {
-  const base = evidence.tests.testCommand ?? "npm test --silent";
+export function selectTestCommand(input: Pick<BugInput, "failingTest">, tests: TestEvidence): string | undefined {
+  const base = tests.testCommand;
   if (input.failingTest) {
-    if (evidence.tests.runner === "vitest") return `npx vitest run ${quote(input.failingTest)}`;
-    if (evidence.tests.runner === "jest") return `npx jest ${quote(input.failingTest)}`;
-    if (evidence.tests.runner === "pytest") return `pytest -q ${quote(input.failingTest)}`;
-    if (evidence.tests.runner === "go-test") return `go test ${quote(input.failingTest)}`;
+    if (tests.runner === "vitest") return `npx vitest run ${quote(input.failingTest)}`;
+    if (tests.runner === "jest") return `npx jest ${quote(input.failingTest)}`;
+    if (tests.runner === "pytest") return `pytest -q ${quote(input.failingTest)}`;
+    if (tests.runner === "go-test") return `go test ${quote(input.failingTest)}`;
   }
 
-  const firstRelated = evidence.tests.relatedTests[0]?.file;
-  if (firstRelated && evidence.tests.runner === "vitest") {
+  const firstRelated = tests.relatedTests[0]?.file;
+  if (firstRelated && tests.runner === "vitest") {
     return `npx vitest run ${quote(firstRelated)}`;
   }
-  if (firstRelated && evidence.tests.runner === "jest") {
+  if (firstRelated && tests.runner === "jest") {
     return `npx jest ${quote(firstRelated)}`;
   }
 

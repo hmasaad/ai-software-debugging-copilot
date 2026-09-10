@@ -153,6 +153,104 @@ export function renderMarkdownReport(report: DebuggingReport): string {
         ].join("\n")
       : "",
     "",
+    report.reproductionAnalysis
+      ? [
+          "## Reproduction Agent",
+          "",
+          report.reproductionAnalysis.summary,
+          `\nMethod: \`${report.reproductionAnalysis.method}\`${report.reproductionAnalysis.command ? ` · \`${report.reproductionAnalysis.command}\`` : ""}`,
+          report.reproductionAnalysis.steps.length
+            ? `\nSteps:\n${report.reproductionAnalysis.steps.map((step) => `- ${step}`).join("\n")}`
+            : "",
+          report.reproductionAnalysis.relatedTests.length
+            ? `\nRelated tests:\n${report.reproductionAnalysis.relatedTests.map((t) => `- \`${t.file}\` — ${t.reason}`).join("\n")}`
+            : "",
+          report.reproductionAnalysis.handoff.length
+            ? `\nHandoff:\n${report.reproductionAnalysis.handoff.map((note) => `- ${note}`).join("\n")}`
+            : "",
+        ].join("\n")
+      : "",
+    "",
+    report.causeAnalysis
+      ? [
+          "## Root Cause Agent",
+          "",
+          report.causeAnalysis.summary,
+          report.causeAnalysis.causes.length
+            ? `\nRanked causes:\n${report.causeAnalysis.causes
+                .map(
+                  (cause) =>
+                    `- **${cause.id}** \`${cause.kind}\` (${pct(cause.likelihood)}): ${cause.description}`,
+                )
+                .join("\n")}`
+            : "",
+          report.causeAnalysis.affectedFiles.length
+            ? `\nAffected files: ${report.causeAnalysis.affectedFiles.map((file) => `\`${file}\``).join(", ")}`
+            : "",
+          report.causeAnalysis.handoff.length
+            ? `\nHandoff:\n${report.causeAnalysis.handoff.map((note) => `- ${note}`).join("\n")}`
+            : "",
+        ].join("\n")
+      : "",
+    "",
+    report.fixAnalysis
+      ? [
+          "## Fix Agent",
+          "",
+          report.fixAnalysis.summary,
+          `\nStrategy: \`${report.fixAnalysis.strategy}\` (${report.fixAnalysis.source})`,
+          report.fixAnalysis.proposal.edits.length
+            ? `\nEdits:\n${report.fixAnalysis.proposal.edits
+                .map((edit) => `- \`${edit.path}\`\n\`\`\`diff\n- ${oneLine(edit.oldString)}\n+ ${oneLine(edit.newString)}\n\`\`\``)
+                .join("\n")}`
+            : "",
+          report.fixAnalysis.handoff.length
+            ? `\nHandoff:\n${report.fixAnalysis.handoff.map((note) => `- ${note}`).join("\n")}`
+            : "",
+        ].join("\n")
+      : "",
+    "",
+    report.testAnalysis
+      ? [
+          "## Test Agent",
+          "",
+          report.testAnalysis.summary,
+          report.testAnalysis.proposedTest
+            ? `\n${report.testAnalysis.proposedTest.created ? "Created" : "Proposed"} test: \`${report.testAnalysis.proposedTest.path}\` — ${report.testAnalysis.proposedTest.reason}`
+            : "",
+          report.testAnalysis.handoff.length
+            ? `\nHandoff:\n${report.testAnalysis.handoff.map((note) => `- ${note}`).join("\n")}`
+            : "",
+        ].join("\n")
+      : "",
+    "",
+    report.validationAnalysis
+      ? [
+          "## Validation Agent",
+          "",
+          report.validationAnalysis.summary,
+          `\nVerdict: \`${report.validationAnalysis.verdict}\``,
+          report.validationAnalysis.checks.length
+            ? `\nChecks:\n${report.validationAnalysis.checks
+                .map((check) => `- ${check.passed ? "pass" : "fail"} **${check.id}**: ${check.detail}`)
+                .join("\n")}`
+            : "",
+          report.validationAnalysis.residualRisks.length
+            ? `\nResidual risks:\n${report.validationAnalysis.residualRisks.map((risk) => `- ${risk}`).join("\n")}`
+            : "",
+        ].join("\n")
+      : "",
+    "",
+    report.incidentReport
+      ? [
+          "## Incident Agent",
+          "",
+          `**${report.incidentReport.severity.toUpperCase()}** · ${report.incidentReport.status}`,
+          "",
+          report.incidentReport.body,
+        ].join("\n")
+      : "",
+    "",
     "## Error",
     "",
     `\`\`\`\n${e.error.type ? `${e.error.type}: ` : ""}${e.error.message}\n\`\`\``,

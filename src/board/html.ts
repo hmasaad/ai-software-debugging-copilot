@@ -1,4 +1,19 @@
-import type { AgentRun, CodeInvestigation, DebuggingReport, DependencyAnalysis, GitInvestigation, Hypothesis, LogAnalysis, StackFrame } from "../types.js";
+import type {
+  AgentRun,
+  CauseAnalysis,
+  CodeInvestigation,
+  DebuggingReport,
+  DependencyAnalysis,
+  FixAnalysis,
+  GitInvestigation,
+  Hypothesis,
+  IncidentReport,
+  LogAnalysis,
+  ReproductionAnalysis,
+  StackFrame,
+  TestAnalysis,
+  ValidationAnalysis,
+} from "../types.js";
 
 export function renderInvestigationBoard(report: DebuggingReport): string {
   const e = report.evidence;
@@ -54,6 +69,8 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
       ${stat(String(rca.hypotheses.length), "Hypotheses")}
       ${stat(fix.applied ? "Applied" : "Not applied", "Patch", fix.applied ? "ok" : "warn")}
       ${stat(verify.passed ? "Passed" : verify.testsRan ? "Failed" : "Skipped", "Verification", verify.passed ? "ok" : verify.testsRan ? "bad" : "")}
+      ${stat(report.validationAnalysis.verdict, "Validation", report.validationAnalysis.resolved ? "ok" : report.validationAnalysis.verdict === "unresolved" ? "bad" : "warn")}
+      ${stat(report.incidentReport.severity.toUpperCase(), "Incident", report.incidentReport.status === "resolved" ? "ok" : "warn")}
     </div>
   </header>
 
@@ -74,6 +91,8 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
   ${report.notes.length ? `<div class="notes">${report.notes.map((n) => `<p>${esc(n)}</p>`).join("")}</div>` : ""}
 
   ${agentsStrip(report.agentRuns)}
+
+  ${incidentBanner(report.incidentReport)}
 
   <section class="board" aria-label="Investigation columns">
     <article class="col" id="col-evidence">
@@ -129,6 +148,7 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
 
     <article class="col" id="col-reproduce">
       <h2>Analyze &amp; reproduce</h2>
+      ${reproductionAgentCard(report.reproductionAnalysis)}
       <div class="card ${repro.reproduced ? "tint-bad" : ""}">
         <h3>Reproduction</h3>
         <p class="lead">${esc(repro.summary)}</p>
@@ -144,6 +164,7 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
 
     <article class="col" id="col-rca">
       <h2>Root cause analysis</h2>
+      ${rootCauseAgentCard(report.causeAnalysis)}
       <div class="card tint-warn">
         <h3>Likely root cause</h3>
         <p class="lead">${esc(rca.rootCause)}</p>
@@ -159,6 +180,9 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
 
     <article class="col" id="col-fix">
       <h2>Fix &amp; verify</h2>
+      ${fixAgentCard(report.fixAnalysis)}
+      ${testAgentCard(report.testAnalysis)}
+      ${validationAgentCard(report.validationAnalysis)}
       <div class="card">
         <h3>Proposed fix</h3>
         <p class="lead">${esc(fix.summary)}</p>
@@ -265,6 +289,146 @@ function codeInvestigatorCard(analysis: CodeInvestigation): string {
     ${steps ? `<ol class="frames">${steps}</ol>` : ""}
     ${suspects}
     ${callers}
+    ${handoff}
+  </div>`;
+}
+
+function validationAgentCard(analysis: ValidationAnalysis): string {
+  const checks = analysis.checks
+    .map(
+      (check) =>
+        `<li class="${check.passed ? "project" : ""}"><code>${esc(check.id)}</code> ${esc(check.detail)}<span class="scope">${check.passed ? "pass" : "fail"}</span></li>`,
+    )
+    .join("");
+  const risks = analysis.residualRisks.length
+    ? `<ul>${analysis.residualRisks.map((risk) => `<li>${esc(risk)}</li>`).join("")}</ul>`
+    : "";
+  const tone = analysis.resolved ? "tint-ok" : analysis.verdict === "unresolved" ? "tint-bad" : "tint-warn";
+
+  return `<div class="card ${tone}">
+    <h3>Validation Agent</h3>
+    <p class="meta">Check whether the fix actually resolves the issue</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    ${checks ? `<ol class="frames">${checks}</ol>` : ""}
+    ${risks}
+  </div>`;
+}
+
+function incidentBanner(report: IncidentReport): string {
+  const timeline = report.timeline
+    .map((event) => `<li><strong>${esc(event.label)}</strong> ${esc(event.detail)}</li>`)
+    .join("");
+  const followUps = report.followUps.length
+    ? `<ul>${report.followUps.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>`
+    : "";
+  const tone = report.status === "resolved" ? "tint-ok" : report.status === "investigating" ? "tint-bad" : "tint-warn";
+
+  return `<section class="incident ${tone === "tint-ok" ? "ok" : ""}" aria-label="Incident report">
+    <div class="card ${tone}">
+      <h3>Incident Agent</h3>
+      <p class="meta">Produce an engineer-friendly incident report · ${esc(report.severity.toUpperCase())} · ${esc(report.status)}</p>
+      <p class="lead">${esc(report.title)}</p>
+      <p>${esc(report.whatHappened)}</p>
+      <p class="meta">Impact ${esc(report.impact)}</p>
+      <p><strong>Root cause.</strong> ${esc(report.rootCause)}</p>
+      <p><strong>Fix.</strong> ${esc(report.fix)}</p>
+      <p><strong>Validation.</strong> ${esc(report.validation)}</p>
+      ${timeline ? `<ol class="frames">${timeline}</ol>` : ""}
+      ${followUps}
+    </div>
+  </section>`;
+}
+
+function fixAgentCard(analysis: FixAnalysis): string {
+  const edits = analysis.proposal.edits
+    .map(
+      (edit) =>
+        `<pre class="diff"><span class="del">- ${esc(oneLine(edit.oldString))}</span>
+<span class="add">+ ${esc(oneLine(edit.newString))}</span></pre>`,
+    )
+    .join("");
+  const handoff = analysis.handoff.length
+    ? `<ul>${analysis.handoff.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>`
+    : "";
+
+  return `<div class="card ${analysis.proposal.applied ? "tint-ok" : analysis.proposal.edits.length ? "tint-warn" : ""}">
+    <h3>Fix Agent</h3>
+    <p class="meta">Generate a minimal code fix</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    <p class="meta">Strategy <code>${esc(analysis.strategy)}</code> · ${esc(analysis.source)}${analysis.proposal.applied ? " · applied" : ""}</p>
+    ${edits}
+    ${handoff}
+  </div>`;
+}
+
+function testAgentCard(analysis: TestAnalysis): string {
+  const proposed = analysis.proposedTest
+    ? `<p class="meta">${analysis.proposedTest.created ? "Created" : "Proposed"} <code>${esc(analysis.proposedTest.path)}</code> — ${esc(analysis.proposedTest.reason)}</p>`
+    : "";
+  const handoff = analysis.handoff.length
+    ? `<ul>${analysis.handoff.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>`
+    : "";
+  const tone = analysis.verification.passed ? "tint-ok" : analysis.verification.testsRan ? "tint-bad" : "";
+
+  return `<div class="card ${tone}">
+    <h3>Test Agent</h3>
+    <p class="meta">Create/run tests against the fix</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    ${proposed}
+    ${handoff}
+  </div>`;
+}
+
+function reproductionAgentCard(analysis: ReproductionAnalysis): string {
+  const steps = analysis.steps.length
+    ? `<ol>${analysis.steps.map((step) => `<li>${esc(step)}</li>`).join("")}</ol>`
+    : "";
+  const tests = analysis.relatedTests.length
+    ? `<ul>${analysis.relatedTests
+        .slice(0, 6)
+        .map((test) => `<li><code>${esc(test.file)}</code> — ${esc(test.reason)}</li>`)
+        .join("")}</ul>`
+    : "";
+  const handoff = analysis.handoff.length
+    ? `<ul>${analysis.handoff.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>`
+    : "";
+  const tone = analysis.result.reproduced ? "tint-bad" : analysis.result.attempted ? "tint-ok" : "";
+
+  return `<div class="card ${tone}">
+    <h3>Reproduction Agent</h3>
+    <p class="meta">Determine how to reproduce the issue</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    <p class="meta">Method <code>${esc(analysis.method)}</code>${analysis.command ? ` · <code>${esc(analysis.command)}</code>` : ""}${analysis.runner ? ` · ${esc(analysis.runner)}` : ""}</p>
+    ${steps}
+    ${tests}
+    ${handoff}
+  </div>`;
+}
+
+function rootCauseAgentCard(analysis: CauseAnalysis): string {
+  const causes = analysis.causes
+    .map((cause) => {
+      const width = Math.round(Math.min(100, Math.max(4, cause.likelihood * 100)));
+      return `<li>
+        <strong>${esc(cause.id)}</strong> <code>${esc(cause.kind)}</code> ${esc(cause.description)}
+        <div class="meter" aria-label="Likelihood ${pct(cause.likelihood)}"><span style="width:${width}%"></span></div>
+      </li>`;
+    })
+    .join("");
+  const handoff = analysis.handoff.length
+    ? `<ul>${analysis.handoff.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>`
+    : "";
+
+  return `<div class="card tint-warn">
+    <h3>Root Cause Agent</h3>
+    <p class="meta">Build and rank possible causes</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    ${causes ? `<ol class="frames">${causes}</ol>` : ""}
+    ${
+      analysis.affectedFiles.length
+        ? `<p class="meta">Affected ${analysis.affectedFiles.map((file) => `<code>${esc(file)}</code>`).join(", ")}</p>`
+        : ""
+    }
     ${handoff}
   </div>`;
 }
@@ -489,7 +653,7 @@ const BOARD_CSS = `
   ul, ol { margin: 0; padding-left: 18px; }
   li { margin: 4px 0; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-  .hero, .pipeline, .board, .notes, .logs, .agents { max-width: 1440px; margin: 0 auto; padding: 20px 24px 0; }
+  .hero, .pipeline, .board, .notes, .logs, .agents, .incident { max-width: 1440px; margin: 0 auto; padding: 20px 24px 0; }
   .logs { padding-bottom: 40px; }
   .kicker { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
   .sub, .meta { color: var(--muted); font-size: 12px; }

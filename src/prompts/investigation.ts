@@ -94,6 +94,66 @@ export function buildEvidenceBrief(
         ? `Handoff:\n${evidence.dependencyAnalysis.handoff.map((h) => `- ${h}`).join("\n")}`
         : "",
       "",
+      `## Reproduction Agent`,
+      evidence.reproductionAnalysis?.summary ?? reproduction.summary,
+      evidence.reproductionAnalysis?.method
+        ? `Method: ${evidence.reproductionAnalysis.method}`
+        : "",
+      evidence.reproductionAnalysis?.command ?? (reproduction.command ? `Command: ${reproduction.command}` : ""),
+      evidence.reproductionAnalysis?.steps.length
+        ? `Steps:\n${evidence.reproductionAnalysis.steps.map((step) => `- ${step}`).join("\n")}`
+        : "",
+      evidence.reproductionAnalysis?.handoff.length
+        ? `Handoff:\n${evidence.reproductionAnalysis.handoff.map((h) => `- ${h}`).join("\n")}`
+        : "",
+      "",
+      `## Root Cause Agent`,
+      evidence.causeAnalysis?.summary ?? "",
+      evidence.causeAnalysis?.causes.length
+        ? `Ranked causes:\n${evidence.causeAnalysis.causes
+            .map((cause) => `- ${cause.id} ${cause.kind} (${cause.likelihood}): ${cause.description}`)
+            .join("\n")}`
+        : "",
+      evidence.causeAnalysis?.handoff.length
+        ? `Handoff:\n${evidence.causeAnalysis.handoff.map((h) => `- ${h}`).join("\n")}`
+        : "",
+      "",
+      `## Fix Agent`,
+      evidence.fixAnalysis?.summary ?? "",
+      evidence.fixAnalysis ? `Strategy: ${evidence.fixAnalysis.strategy} (${evidence.fixAnalysis.source})` : "",
+      evidence.fixAnalysis?.proposal.edits.length
+        ? `Edits:\n${evidence.fixAnalysis.proposal.edits
+            .map((edit) => `- ${edit.path}: ${edit.oldString} → ${edit.newString}`)
+            .join("\n")}`
+        : "",
+      evidence.fixAnalysis?.handoff.length
+        ? `Handoff:\n${evidence.fixAnalysis.handoff.map((h) => `- ${h}`).join("\n")}`
+        : "",
+      "",
+      `## Test Agent`,
+      evidence.testAnalysis?.summary ?? "",
+      evidence.testAnalysis?.proposedTest
+        ? `${evidence.testAnalysis.proposedTest.created ? "Created" : "Proposed"} test: ${evidence.testAnalysis.proposedTest.path}`
+        : "",
+      evidence.testAnalysis?.handoff.length
+        ? `Handoff:\n${evidence.testAnalysis.handoff.map((h) => `- ${h}`).join("\n")}`
+        : "",
+      "",
+      `## Validation Agent`,
+      evidence.validationAnalysis?.summary ?? "",
+      evidence.validationAnalysis ? `Verdict: ${evidence.validationAnalysis.verdict}` : "",
+      evidence.validationAnalysis?.checks.length
+        ? `Checks:\n${evidence.validationAnalysis.checks
+            .map((check) => `- ${check.passed ? "pass" : "fail"} ${check.id}: ${check.detail}`)
+            .join("\n")}`
+        : "",
+      "",
+      `## Incident Agent`,
+      evidence.incidentReport?.summary ?? "",
+      evidence.incidentReport
+        ? `${evidence.incidentReport.severity} ${evidence.incidentReport.status}: ${evidence.incidentReport.whatHappened}`
+        : "",
+      "",
       `## Bug`,
       input.message ? `Message: ${input.message}` : "",
       `Parsed: ${evidence.error.type ?? "Error"}: ${evidence.error.message}`,
@@ -162,7 +222,9 @@ confidence and likelihood are numbers between 0 and 1.
 Prefer project frames over framework/library frames.
 Recent git blame + failing tests that overlap a stack frame are strong evidence.
 If Git Investigator names an introducing commit, treat that as historical context, not proof by itself.
-If Dependency Analyst marks a likely dependency bug, prefer install/version hypotheses over application-code patches.`;
+If Dependency Analyst marks a likely dependency bug, prefer install/version hypotheses over application-code patches.
+Start from Root Cause Agent's ranked causes and only reorder them when new evidence in this brief contradicts them.
+Follow Reproduction Agent steps when listing reproSteps.`;
 }
 
 export function fixSystemPrompt(): string {
@@ -181,6 +243,7 @@ Rules:
 - oldString must match the file contents in the evidence EXACTLY, including whitespace.
 - Prefer the smallest correct change.
 - Do not change unrelated files.
+- Fix Agent will apply this as a minimal patch; keep edits to the crash expression when possible.
 - Do not include markdown fences in JSON strings unless they already exist in the source.
 - If you cannot produce a safe edit, return an empty edits array and explain in summary.`;
 }

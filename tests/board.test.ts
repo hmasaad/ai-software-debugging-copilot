@@ -186,6 +186,104 @@ const report: DebuggingReport = {
     summary: "No strong dependency/version signal (node). Treat this as application code unless a later agent disagrees.",
     handoff: ["Prefer a source-level fix; dependency/version looks unlikely."],
   },
+  reproductionAnalysis: {
+    result: {
+      attempted: true,
+      reproduced: true,
+      command: "npm test --silent",
+      exitCode: 1,
+      output: "NaN !== 10",
+      summary: "Reproduced: `npm test --silent` failed with exit 1.",
+    },
+    method: "test-suite",
+    command: "npm test --silent",
+    runner: "npm-test",
+    relatedTests: [{ file: "src/cart.test.js", reason: "name-match for src/cart.js" }],
+    steps: ["Run `npm test --silent`.", "Confirm the crash at `src/cart.js:16` in getPrimaryItemId."],
+    summary: "Issue reproduced via `npm test --silent` (test-suite).",
+    handoff: ["Failure is live: Reproduced: `npm test --silent` failed with exit 1."],
+  },
+  causeAnalysis: {
+    causes: [
+      {
+        id: "H1",
+        kind: "null-deref",
+        description: "Null/undefined value reached a dereference. A missing guard or bad default is likely.",
+        evidence: ["Cannot read properties of undefined (reading 'id')"],
+        likelihood: 0.78,
+      },
+    ],
+    leading: {
+      id: "H1",
+      kind: "null-deref",
+      description: "Null/undefined value reached a dereference. A missing guard or bad default is likely.",
+      evidence: ["Cannot read properties of undefined (reading 'id')"],
+      likelihood: 0.78,
+    },
+    confidence: 0.82,
+    affectedFiles: ["src/cart.js"],
+    summary: "Leading cause H1 (82%): Null/undefined value reached a dereference.",
+    handoff: ["Investigate H1 (null-deref) first."],
+  },
+  fixAnalysis: {
+    proposal: {
+      summary: "Add a null/undefined check at the dereference in the top project frame.",
+      rationale: "order.item is undefined",
+      edits: [],
+      testPlan: ["Run npm test --silent."],
+      risks: [],
+      applied: false,
+      applyErrors: [],
+    },
+    strategy: "optional-chain",
+    source: "heuristic",
+    summary: "Heuristic optional-chain fix in src/cart.js (1 edit, not applied).",
+    handoff: ["Re-run with --apply to write the patch and verify."],
+  },
+  testAnalysis: {
+    verification: {
+      testsRan: false,
+      passed: false,
+      output: "",
+      summary: "Patch not applied; verification skipped.",
+    },
+    relatedTests: [{ file: "src/cart.test.js", reason: "name-match for src/cart.js" }],
+    proposedTest: {
+      path: "src/cart.regression.test.js",
+      content: "",
+      reason: "Extend coverage for getPrimaryItemId.",
+      created: false,
+    },
+    createdFiles: [],
+    summary: "Proposed regression test `src/cart.regression.test.js`.",
+    handoff: ["Apply the patch, then re-run Test Agent."],
+  },
+  validationAnalysis: {
+    verdict: "inconclusive",
+    resolved: false,
+    checks: [
+      { id: "patch-applied", passed: false, detail: "Patch was not applied." },
+      { id: "tests-passed", passed: false, detail: "Tests were not run." },
+    ],
+    residualRisks: ["Patch applied without a live test run."],
+    summary: "Cannot confirm the fix yet (0/2 checks passed).",
+    handoff: ["Apply the patch and re-run tests before calling the incident resolved."],
+  },
+  incidentReport: {
+    title: "TypeError: Cannot read properties of undefined (reading 'id') @ src/cart.js:16",
+    severity: "sev-2",
+    status: "identified",
+    impact: "TypeError is reproducible at src/cart.js:16 via `npm test --silent`.",
+    whatHappened: "TypeError: Cannot read properties of undefined (reading 'id'). Crash site src/cart.js:16.",
+    rootCause: "Null/undefined value reached a dereference.",
+    fix: "Heuristic optional-chain fix in src/cart.js (not applied).",
+    validation: "Cannot confirm the fix yet.",
+    timeline: [{ label: "Detected", detail: "TypeError at src/cart.js:16 in getPrimaryItemId." }],
+    followUps: ["Apply the patch with --apply and re-run validation."],
+    body: "## Incident\n**SEV-2** · identified",
+    summary: "SEV-2 identified: TypeError at src/cart.js:16.",
+    handoff: ["Apply the patch with --apply and re-run validation."],
+  },
 };
 
 describe("investigation board", () => {
@@ -204,6 +302,12 @@ describe("investigation board", () => {
     expect(html).toContain("Code Investigator");
     expect(html).toContain("Git Investigator");
     expect(html).toContain("Dependency Analyst");
+    expect(html).toContain("Reproduction Agent");
+    expect(html).toContain("Root Cause Agent");
+    expect(html).toContain("Fix Agent");
+    expect(html).toContain("Test Agent");
+    expect(html).toContain("Validation Agent");
+    expect(html).toContain("Incident Agent");
     expect(html).toContain("unguarded item.id access");
     expect(html).toContain("Trace the error through the codebase");
     expect(html).toContain("Core agents");
