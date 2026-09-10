@@ -44,6 +44,9 @@ async function detectRunner(repoPath: string): Promise<{ name: string; command: 
   if (existsSync(path.join(repoPath, "pom.xml"))) {
     return { name: "maven", command: "mvn -q test" };
   }
+  if (existsSync(path.join(repoPath, "pubspec.yaml"))) {
+    return { name: "flutter-test", command: "flutter test" };
+  }
 
   return undefined;
 }

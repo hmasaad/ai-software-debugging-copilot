@@ -1,4 +1,5 @@
 export { debugBug } from "./pipeline.js";
+export { debugAutonomously } from "./autonomous/debug.js";
 export { collectEvidence, parseErrorText } from "./collectors/index.js";
 export {
   LogAnalyzerAgent,
@@ -23,6 +24,7 @@ export {
   INCIDENT_AGENT,
 } from "./agents/index.js";
 export { renderMarkdownReport } from "./report/markdown.js";
+export { renderDebugResult } from "./report/result.js";
 export { renderInvestigationBoard } from "./board/html.js";
 export { serveInvestigationBoard, startBoardServer } from "./board/serve.js";
 export { createInvestigator, HeuristicInvestigator } from "./llm/index.js";
@@ -47,4 +49,7 @@ export type {
   ValidationAnalysis,
   IncidentReport,
   AgentRun,
+  AutonomousDebugResult,
+  SandboxSession,
+  SandboxAction,
 } from "./types.js";

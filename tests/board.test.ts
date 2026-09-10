@@ -284,6 +284,17 @@ const report: DebuggingReport = {
     summary: "SEV-2 identified: TypeError at src/cart.js:16.",
     handoff: ["Apply the patch with --apply and re-run validation."],
   },
+  sandbox: {
+    originRepo: "/repo/examples/failing-cart",
+    path: "/tmp/debug-copilot-sandbox-demo",
+    kind: "worktree",
+    promoted: false,
+    reverted: false,
+    actions: [
+      { tool: "inspect-repo", detail: "kind=worktree HEAD=abc1234", ok: true },
+      { tool: "search-code", detail: "cart.js: return order.item.id", ok: true },
+    ],
+  },
 };
 
 describe("investigation board", () => {
@@ -308,6 +319,8 @@ describe("investigation board", () => {
     expect(html).toContain("Test Agent");
     expect(html).toContain("Validation Agent");
     expect(html).toContain("Incident Agent");
+    expect(html).toContain("Autonomous sandbox");
+    expect(html).toContain("inspect-repo");
     expect(html).toContain("unguarded item.id access");
     expect(html).toContain("Trace the error through the codebase");
     expect(html).toContain("Core agents");

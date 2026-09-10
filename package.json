@@ -25,6 +25,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "debug:example": "tsx src/cli.ts --repo examples/failing-cart --log examples/failing-cart/crash.log --investigator heuristic --no-run-tests",
+    "debug:autonomous": "tsx src/cli.ts --autonomous --repo examples/failing-cart --log examples/failing-cart/crash.log --investigator heuristic --no-run-tests",
     "board:example": "tsx src/cli.ts --repo examples/failing-cart --log examples/failing-cart/crash.log --investigator heuristic --json examples/failing-cart/debug-report.json --board --port 8787"
   },
   "engines": {

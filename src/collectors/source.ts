@@ -100,7 +100,7 @@ function extLanguage(file: string): string | undefined {
     go: "go",
     java: "java",
     rs: "rust",
-    rb: "ruby",
+    dart: "dart",
   };
   return map[ext];
 }

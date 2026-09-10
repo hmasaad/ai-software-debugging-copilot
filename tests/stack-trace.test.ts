@@ -52,4 +52,29 @@ ValueError: boom`);
       functionName: "com.acme.UserService.load",
     });
   });
+
+  it("parses a Flutter/Dart stack including a bare file:line", () => {
+    const parsed = parseErrorText(`Flutter app crashes when opening Savings screen.
+
+Exception:
+Null check operator used on a null value
+
+Stack trace:
+#0      SavingsMemberMediaBloc._onLoad (package:app/savings/SavingsMemberMediaBloc.dart:217:12)
+#1      Bloc.onEvent (package:bloc/bloc.dart:10:5)
+SavingsMemberMediaBloc.dart:217`);
+
+    expect(parsed.language).toBe("dart");
+    expect(parsed.type).toBe("NullCheckError");
+    expect(parsed.message).toMatch(/Null check operator/);
+    expect(parsed.frames[0]).toMatchObject({
+      file: "savings/SavingsMemberMediaBloc.dart",
+      line: 217,
+      column: 12,
+      functionName: "SavingsMemberMediaBloc._onLoad",
+    });
+    expect(parsed.frames.some((frame) => frame.file.endsWith("SavingsMemberMediaBloc.dart") && frame.line === 217)).toBe(
+      true,
+    );
+  });
 });

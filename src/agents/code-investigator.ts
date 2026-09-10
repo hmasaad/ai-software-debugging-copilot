@@ -261,7 +261,7 @@ function describeStep(
 async function findCallers(repoPath: string, name: string, originFile?: string): Promise<CodeCaller[]> {
   const grep = await tryCommand(
     "git",
-    ["--no-pager", "grep", "-n", "-F", name, "--", "*.js", "*.jsx", "*.ts", "*.tsx", "*.mjs", "*.cjs", "*.py", "*.go", "*.java"],
+    ["--no-pager", "grep", "-n", "-F", name, "--", "*.js", "*.jsx", "*.ts", "*.tsx", "*.mjs", "*.cjs", "*.py", "*.go", "*.java", "*.dart"],
     {
       cwd: repoPath,
       timeoutMs: 10_000,

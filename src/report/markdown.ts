@@ -251,6 +251,22 @@ export function renderMarkdownReport(report: DebuggingReport): string {
         ].join("\n")
       : "",
     "",
+    report.sandbox
+      ? [
+          "## Autonomous sandbox",
+          "",
+          `- **Kind:** ${report.sandbox.kind}`,
+          `- **Workspace:** \`${report.sandbox.path}\``,
+          `- **Promoted:** ${report.sandbox.promoted ? "yes" : "no"}`,
+          `- **Reverted:** ${report.sandbox.reverted ? "yes" : "no"}`,
+          report.sandbox.actions.length
+            ? `\nActions:\n${report.sandbox.actions
+                .map((action) => `- ${action.ok ? "ok" : "fail"} **${action.tool}**: ${action.detail}`)
+                .join("\n")}`
+            : "",
+        ].join("\n")
+      : "",
+    "",
     "## Error",
     "",
     `\`\`\`\n${e.error.type ? `${e.error.type}: ` : ""}${e.error.message}\n\`\`\``,

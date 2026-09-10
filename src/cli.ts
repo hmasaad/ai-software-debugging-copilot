@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
+import { debugAutonomously } from "./autonomous/debug.js";
 import { debugBug } from "./pipeline.js";
 import { renderMarkdownReport } from "./report/markdown.js";
+import { renderDebugResult } from "./report/result.js";
 import { serveInvestigationBoard } from "./board/serve.js";
 import type { DebuggingReport, InvestigatorKind } from "./types.js";
 
@@ -12,6 +14,11 @@ const HELP = `Usage: debug-copilot [options]
 Investigate a bug like an engineer: collect evidence, reproduce, rank root
 causes, propose a fix, run tests, and write a debugging report.
 
+With --autonomous the agent works in an isolated git worktree: inspect,
+search, git history, reproduce, patch, re-test, inspect the diff, and revert
+if validation fails. Production code is never touched unless you also pass
+--apply (promote the validated patch).
+
 Options:
   --repo <path>           Repository to investigate (default: cwd)
   --error <text>          Error message
@@ -19,7 +26,9 @@ Options:
   --log <path>            Path to a log file
   --test <path>           Failing test file or name
   --context <text>        Extra runtime context
-  --apply                 Apply the generated patch
+  --autonomous            Investigate in an isolated sandbox
+  --keep-sandbox          Leave the sandbox directory on disk
+  --apply                 Apply the patch (promote from sandbox in --autonomous)
   --run-tests             Reproduce and verify with the repo's test runner (default: true)
   --no-run-tests          Skip test execution
   --max-iterations <n>    Fix/verify loops (default: 2)
@@ -45,6 +54,8 @@ async function main(argv: string[]): Promise<void> {
       test: { type: "string" },
       context: { type: "string" },
       apply: { type: "boolean", default: false },
+      autonomous: { type: "boolean", default: false },
+      "keep-sandbox": { type: "boolean", default: false },
       "run-tests": { type: "boolean", default: true },
       "no-run-tests": { type: "boolean", default: false },
       "max-iterations": { type: "string", default: "2" },
@@ -83,35 +94,36 @@ async function main(argv: string[]): Promise<void> {
   }
 
   const jsonPath = values.json ?? (values.board ? "debug-report.json" : undefined);
-
-  const report = await debugBug(
-    {
-      repoPath: values.repo ?? process.cwd(),
-      message: values.error,
-      stackTrace: values.stack ?? stdin,
-      logPath: values.log,
-      failingTest: values.test,
-      extraContext: values.context,
+  const bug = {
+    repoPath: values.repo ?? process.cwd(),
+    message: values.error,
+    stackTrace: values.stack ?? stdin,
+    logPath: values.log,
+    failingTest: values.test,
+    extraContext: values.context,
+  };
+  const pipeline = {
+    repoPath: values.repo ?? process.cwd(),
+    apply: values.apply,
+    autonomous: values.autonomous,
+    keepSandbox: values["keep-sandbox"],
+    runTests: values["no-run-tests"] ? false : values["run-tests"],
+    maxIterations: Number.parseInt(values["max-iterations"] ?? "2", 10) || 2,
+    investigator,
+    model: values.model,
+    reportPath: values.report,
+    jsonReportPath: jsonPath,
+    onEvent: (event: { agent?: string; stage: string; message: string }) => {
+      const label = event.agent ?? event.stage;
+      process.stderr.write(`[${label}] ${event.message}\n`);
     },
-    {
-      repoPath: values.repo ?? process.cwd(),
-      apply: values.apply,
-      runTests: values["no-run-tests"] ? false : values["run-tests"],
-      maxIterations: Number.parseInt(values["max-iterations"] ?? "2", 10) || 2,
-      investigator,
-      model: values.model,
-      reportPath: values.report,
-      jsonReportPath: jsonPath,
-      onEvent: (event) => {
-        const label = event.agent ?? event.stage;
-        process.stderr.write(`[${label}] ${event.message}\n`);
-      },
-    },
-  );
+  };
 
-  process.stderr.write(`\n${report.rootCause.investigator} · confidence ${Math.round(report.rootCause.confidence * 100)}%\n`);
-  process.stderr.write(`${report.rootCause.rootCause}\n`);
-  process.stderr.write(`${report.verification.summary}\n`);
+  const report = values.autonomous
+    ? (await debugAutonomously(bug, pipeline)).report
+    : await debugBug(bug, pipeline);
+
+  process.stderr.write(`\n${renderDebugResult(report)}\n`);
   if (values.report) process.stderr.write(`Report: ${values.report}\n`);
   if (jsonPath) process.stderr.write(`JSON: ${jsonPath}\n`);
 

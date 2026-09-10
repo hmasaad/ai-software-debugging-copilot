@@ -23,7 +23,7 @@ export interface ParsedError {
   message: string;
   stackTrace?: string;
   frames: StackFrame[];
-  language?: "javascript" | "python" | "java" | "go" | "unknown";
+  language?: "javascript" | "python" | "java" | "go" | "dart" | "unknown";
 }
 
 export interface SourceSnippet {
@@ -213,6 +213,7 @@ export interface DebuggingReport {
   testAnalysis: TestAnalysis;
   validationAnalysis: ValidationAnalysis;
   incidentReport: IncidentReport;
+  sandbox?: SandboxSession;
 }
 
 export interface PipelineOptions {
@@ -228,6 +229,8 @@ export interface PipelineOptions {
   baseUrl?: string;
   onEvent?: (event: PipelineEvent) => void;
   investigatorInstance?: Investigator;
+  autonomous?: boolean;
+  keepSandbox?: boolean;
 }
 
 export type InvestigatorKind = "auto" | "heuristic" | "openai" | "anthropic" | "cursor";
@@ -243,6 +246,8 @@ export type PipelineStage =
   | "test-agent"
   | "validation-agent"
   | "incident-agent"
+  | "sandbox"
+  | "autonomous"
   | "collect"
   | "reproduce"
   | "analyze"
@@ -512,4 +517,42 @@ export interface IncidentReport {
   body: string;
   summary: string;
   handoff: string[];
+}
+
+export type SandboxKind = "worktree" | "clone" | "copy";
+
+export type SandboxTool =
+  | "inspect-repo"
+  | "search-code"
+  | "inspect-git"
+  | "run-tests"
+  | "reproduce"
+  | "modify-code"
+  | "inspect-diff"
+  | "revert";
+
+export interface SandboxAction {
+  tool: SandboxTool;
+  detail: string;
+  ok: boolean;
+}
+
+export interface SandboxSession {
+  originRepo: string;
+  path: string;
+  kind: SandboxKind;
+  promoted: boolean;
+  reverted: boolean;
+  actions: SandboxAction[];
+}
+
+export interface AutonomousDebugResult {
+  report: DebuggingReport;
+  originRepo: string;
+  sandboxPath: string;
+  sandboxKind: SandboxKind;
+  promoted: boolean;
+  reverted: boolean;
+  diff: string;
+  actions: SandboxAction[];
 }

@@ -5,9 +5,10 @@ An AI system that doesn't just explain errors — it **investigates a bug like a
 ```
 Bug / Error / Crash
         ↓
-┌─────────────────────┐
-│ Debugging Copilot   │
-└─────────────────────┘
+┌─────────────────────────┐
+│ Debugging Copilot       │
+│  (optional sandbox)     │
+└─────────────────────────┘
         ↓
   Collect Evidence
    ├── Error logs
@@ -84,6 +85,72 @@ Incident Agent writes a SEV-style report (what happened, impact, root cause, fix
 
 Root-cause and fix prompts consume those briefings instead of re-reading raw logs and files from scratch.
 
+## Autonomous debugging
+
+`--autonomous` gives the agent a **controlled workspace** (a git worktree, or a clone/copy if worktrees are unavailable). Production code is never modified unless you also pass `--apply`, which promotes a validated patch.
+
+```
+Agent
+ │
+ ├── inspect repository
+ ├── search code
+ ├── inspect git history
+ ├── run tests
+ ├── reproduce error
+ ├── modify code
+ ├── run tests again
+ ├── inspect diff
+ └── revert if validation fails
+```
+
+Example (Flutter-style crash):
+
+```bash
+npx tsx src/cli.ts \
+  --autonomous \
+  --repo . \
+  --error "Null check operator used on a null value" \
+  --stack "SavingsMemberMediaBloc.dart:217" \
+  --investigator heuristic
+```
+
+The CLI prints a boxed result:
+
+```
+╔══════════════════════════════════════╗
+║ DEBUGGING RESULT                     ║
+╚══════════════════════════════════════╝
+
+Severity: HIGH
+Confidence: 96%
+
+Root Cause:
+getSavingsMedia() can return null, but
+SavingsMemberMediaBloc assumes the
+response always exists.
+
+Introduced:
+Commit 8f31a2c
+PR #421
+
+Reproduction:
+✓ Reproduced locally
+
+Recommended Fix:
+Handle null response before accessing
+media.
+
+Validation:
+✓ Existing tests
+✓ New regression test
+✓ Full test suite
+
+Risk:
+LOW
+```
+
+`--apply` with `--autonomous` means **promote** the sandbox patch after validation. Without `--apply`, the origin working tree stays untouched even if the sandbox fix is confirmed.
+
 ## Setup
 
 ```bash
@@ -121,6 +188,13 @@ npx tsx src/cli.ts \
 # Pipe a stack trace on stdin
 cat crash.log | npx tsx src/cli.ts --repo . --apply
 
+# Investigate inside an isolated sandbox (does not write to the repo)
+npx tsx src/cli.ts \
+  --autonomous \
+  --repo examples/failing-cart \
+  --log examples/failing-cart/crash.log \
+  --investigator heuristic
+
 # Investigate and open the board
 npm run board:example
 # or reopen a saved report
@@ -136,7 +210,9 @@ debug-copilot [options]
   --log <path>            Path to a log file
   --test <path>           Failing test file or name
   --context <text>        Extra runtime context
-  --apply                 Apply the generated patch
+  --autonomous            Investigate in an isolated sandbox
+  --keep-sandbox          Leave the sandbox directory on disk
+  --apply                 Apply the patch (promote from sandbox in --autonomous)
   --no-run-tests          Skip reproduction / verification
   --max-iterations <n>    Fix/verify loops (default: 2)
   --investigator <name>   auto | heuristic | openai | anthropic | cursor
@@ -153,24 +229,23 @@ After `npm run build`, the binary is `debug-copilot`.
 ## Library
 
 ```ts
-import { debugBug } from "debugging-copilot";
+import { debugAutonomously, debugBug, renderDebugResult } from "debugging-copilot";
 
-const report = await debugBug(
+const result = await debugAutonomously(
   {
     repoPath: process.cwd(),
-    message: "TypeError: Cannot read properties of undefined (reading 'id')",
-    logPath: "./crash.log",
+    message: "Null check operator used on a null value",
+    stackTrace: "SavingsMemberMediaBloc.dart:217",
   },
   {
     repoPath: process.cwd(),
-    apply: true,
+    apply: false,
     runTests: true,
-    reportPath: "./debug-report.md",
   },
 );
 
-console.log(report.rootCause.rootCause);
-console.log(report.verification.passed);
+console.log(renderDebugResult(result.report));
+console.log(result.promoted, result.reverted);
 ```
 
 ## CI
@@ -191,7 +266,7 @@ On a failing GitHub Actions job:
       --no-run-tests
 ```
 
-Use `--apply` only in a throwaway job or bot branch — the default is report-only.
+Use `--apply` only in a throwaway job or bot branch — the default is report-only. Prefer `--autonomous` so investigation happens in a worktree; add `--apply` only when you intend to promote a validated patch.
 
 ## Project layout
 
@@ -199,11 +274,13 @@ Use `--apply` only in a throwaway job or bot branch — the default is report-on
 src/
   cli.ts                 CLI entry
   pipeline.ts            Orchestrator
+  autonomous/            Sandboxed inspect → patch → validate loop
+  sandbox/               Isolated git worktree / clone / copy
   agents/                Specialist agents (Log Analyzer → Incident Agent)
   collectors/            Evidence: source, git, PRs, tests, deps, runtime
   analysis/              Reproduce, patch, verify
   llm/                   heuristic | openai | anthropic | cursor
-  report/                Debugging report
+  report/                Debugging report + boxed result
   board/                 Investigation board (HTML + local server)
 examples/failing-cart/   Known-bad cart used as a demo
 ```

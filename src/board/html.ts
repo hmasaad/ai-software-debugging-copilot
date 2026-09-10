@@ -10,6 +10,7 @@ import type {
   IncidentReport,
   LogAnalysis,
   ReproductionAnalysis,
+  SandboxSession,
   StackFrame,
   TestAnalysis,
   ValidationAnalysis,
@@ -23,6 +24,16 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
   const verify = report.verification;
 
   const stages = [
+    ...(report.sandbox
+      ? [
+          {
+            id: "sandbox",
+            label: "Sandbox",
+            state: report.sandbox.reverted ? "danger" : "done",
+            detail: `${report.sandbox.kind}${report.sandbox.promoted ? " · promoted" : report.sandbox.reverted ? " · reverted" : " · isolated"}`,
+          },
+        ]
+      : []),
     { id: "evidence", label: "Evidence", state: "done", detail: `${e.error.frames.length} frames · ${e.sourceSnippets.length} snippets` },
     {
       id: "reproduce",
@@ -93,6 +104,8 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
   ${agentsStrip(report.agentRuns)}
 
   ${incidentBanner(report.incidentReport)}
+
+  ${report.sandbox ? sandboxCard(report.sandbox) : ""}
 
   <section class="board" aria-label="Investigation columns">
     <article class="col" id="col-evidence">
@@ -242,6 +255,26 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
   }
 </body>
 </html>`;
+}
+
+function sandboxCard(sandbox: SandboxSession): string {
+  const actions = sandbox.actions
+    .map(
+      (action) =>
+        `<li class="${action.ok ? "project" : ""}"><code>${esc(action.tool)}</code> ${esc(action.detail)}<span class="scope">${action.ok ? "ok" : "fail"}</span></li>`,
+    )
+    .join("");
+  const tone = sandbox.reverted ? "tint-bad" : sandbox.promoted ? "tint-ok" : "tint-warn";
+
+  return `<section class="incident" aria-label="Autonomous sandbox">
+    <div class="card ${tone}">
+      <h3>Autonomous sandbox</h3>
+      <p class="meta">${esc(sandbox.kind)} · ${sandbox.promoted ? "promoted" : sandbox.reverted ? "reverted" : "isolated"}</p>
+      <p class="lead">Investigated in a controlled workspace, not production code.</p>
+      <p class="meta"><code>${esc(shortPath(sandbox.path))}</code></p>
+      ${actions ? `<ol class="frames">${actions}</ol>` : ""}
+    </div>
+  </section>`;
 }
 
 function agentsStrip(runs: AgentRun[]): string {

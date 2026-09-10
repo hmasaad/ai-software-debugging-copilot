@@ -7,6 +7,9 @@ const NODE_NATIVE = /^\s*at\s+(?<fn>.+?)\s+\((?<file>node:.*?)\)$/;
 const PYTHON_FILE = /^\s*File "(?<file>.+)", line (?<line>\d+)(?:, in (?<fn>.+))?/;
 const JAVA_FRAME = /^\s*at\s+(?<fn>[\w.$]+)\((?<file>[\w./\\-]+\.java):(?<line>\d+)\)/;
 const GO_FILE = /^\s*(?<file>\S+\.go):(?<line>\d+)\s/;
+const DART_FRAME =
+  /^#\d+\s+(?<fn>\S+)\s+\((?:package:[^/]+\/)?(?<file>[^:)]+\.dart):(?<line>\d+)(?::(?<col>\d+))?\)/;
+const DART_BARE = /(?<file>[\w./\\-]+\.dart):(?<line>\d+)(?::(?<col>\d+))?/;
 const GENERIC_FILE_LINE = /(?<file>(?:\/|(?:[A-Za-z]:\\)|(?:\.{0,2}[\\/]))[^\s:()]+):(?<line>\d+)(?::(?<col>\d+))?/;
 
 const SKIP_PATH_HINTS = [
@@ -43,6 +46,9 @@ function detectLanguage(text: string): ParsedError["language"] {
   }
   if (/goroutine \d+ \[/.test(text) || /^\s*\S+\.go:\d+\s/m.test(text)) {
     return "go";
+  }
+  if (/Null check operator used on a null value/i.test(text) || /\.dart\b/.test(text) || /^#\d+\s+\S+\s+\(package:/m.test(text)) {
+    return "dart";
   }
   if (/^\s*at\s+/m.test(text) || /(?:TypeError|ReferenceError|Error):/.test(text)) {
     return "javascript";
@@ -91,6 +97,19 @@ function matchFrame(line: string, language: ParsedError["language"]): Omit<Stack
       return {
         file: match.groups.file ?? "",
         line: num(match.groups.line),
+        raw: line.trim(),
+      };
+    }
+  }
+
+  if (language === "dart") {
+    const dart = line.match(DART_FRAME) ?? line.match(DART_BARE);
+    if (dart?.groups?.file) {
+      return {
+        file: dart.groups.file,
+        line: num(dart.groups.line),
+        column: num(dart.groups.col),
+        functionName: dart.groups.fn,
         raw: line.trim(),
       };
     }
@@ -147,6 +166,11 @@ function extractMessage(text: string, language: ParsedError["language"]): { type
     }
   }
 
+  const dartNull = lines.find((line) => /Null check operator used on a null value/i.test(line));
+  if (dartNull) {
+    return { type: "NullCheckError", message: dartNull };
+  }
+
   const errorLine = lines.find((line) =>
     /(?:Error|Exception|Panic|FATAL|TypeError|ReferenceError|ValueError|AssertionError)\b/.test(line),
   );
@@ -162,7 +186,7 @@ function extractMessage(text: string, language: ParsedError["language"]): { type
 }
 
 function looksLikeSourceFile(file: string): boolean {
-  return /\.(ts|tsx|js|jsx|mjs|cjs|py|go|java|kt|rs|rb|php|cs|cpp|c|h)$/i.test(file);
+  return /\.(ts|tsx|js|jsx|mjs|cjs|py|go|java|kt|rs|rb|php|cs|cpp|c|h|dart)$/i.test(file);
 }
 
 function stripFileUrl(file: string): string {
