@@ -1,6 +1,15 @@
 export { debugBug } from "./pipeline.js";
 export { collectEvidence, parseErrorText } from "./collectors/index.js";
-export { LogAnalyzerAgent, LOG_ANALYZER } from "./agents/index.js";
+export {
+  LogAnalyzerAgent,
+  CodeInvestigatorAgent,
+  GitInvestigatorAgent,
+  DependencyAnalystAgent,
+  LOG_ANALYZER,
+  CODE_INVESTIGATOR,
+  GIT_INVESTIGATOR,
+  DEPENDENCY_ANALYST,
+} from "./agents/index.js";
 export { renderMarkdownReport } from "./report/markdown.js";
 export { renderInvestigationBoard } from "./board/html.js";
 export { serveInvestigationBoard, startBoardServer } from "./board/serve.js";
@@ -16,5 +25,8 @@ export type {
   PipelineOptions,
   RootCauseAnalysis,
   LogAnalysis,
+  CodeInvestigation,
+  GitInvestigation,
+  DependencyAnalysis,
   AgentRun,
 } from "./types.js";

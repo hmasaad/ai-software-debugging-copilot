@@ -23,7 +23,7 @@ export async function collectSourceSnippets(
     if (snippets.length >= MAX_SNIPPETS) break;
     let resolved = resolveSourcePath(repoPath, frame.file);
     if (!resolved || !existsSync(resolved)) {
-      resolved = await findByBasename(repoPath, frame.file);
+      resolved = await resolveExistingSource(repoPath, frame.file);
     }
     if (!resolved || !existsSync(resolved)) continue;
 
@@ -49,9 +49,15 @@ export function resolveSourcePath(repoPath: string, file: string): string | unde
   return undefined;
 }
 
-async function findByBasename(repoPath: string, file: string): Promise<string | undefined> {
+export async function resolveExistingSource(repoPath: string, file: string): Promise<string | undefined> {
+  const direct = resolveSourcePath(repoPath, file);
+  if (direct && existsSync(direct)) return direct;
   const base = path.basename(file);
-  const listed = await tryCommand("git", ["ls-files", `*${base}`], { cwd: repoPath, timeoutMs: 8_000 });
+  const listed = await tryCommand("git", ["--no-pager", "ls-files", `*${base}`], {
+    cwd: repoPath,
+    timeoutMs: 8_000,
+    env: { ...process.env, GIT_PAGER: "cat", PAGER: "cat" },
+  });
   if (!listed || listed.code !== 0) return undefined;
   const match = listed.stdout.split("\n").map((line) => line.trim()).find(Boolean);
   return match ? path.join(repoPath, match) : undefined;

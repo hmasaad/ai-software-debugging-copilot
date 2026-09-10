@@ -126,6 +126,66 @@ const report: DebuggingReport = {
     summary: "TypeError at src/cart.js:16 in getPrimaryItemId.",
     handoff: ["Inspect crash site src/cart.js:16 (getPrimaryItemId) — top project frame."],
   },
+  codeInvestigation: {
+    origin: { file: "src/cart.js", line: 16, functionName: "getPrimaryItemId", raw: "at getPrimaryItemId", inProject: true },
+    trace: [
+      {
+        file: "src/crash.js",
+        line: 4,
+        functionName: "getPrimaryItemId",
+        role: "caller",
+        expression: "console.log(getPrimaryItemId(order));",
+        note: "Caller src/crash.js:4: console.log(getPrimaryItemId(order));",
+      },
+      {
+        file: "src/cart.js",
+        line: 16,
+        functionName: "getPrimaryItemId",
+        role: "crash-site",
+        expression: "return order.item.id;",
+        note: "Unguarded access at src/cart.js:16 in getPrimaryItemId: return order.item.id;",
+      },
+    ],
+    functions: [
+      { file: "src/cart.js", name: "getPrimaryItemId", startLine: 15, endLine: 17, signature: "export function getPrimaryItemId(order) {" },
+    ],
+    callers: [{ file: "src/crash.js", line: 4, text: "console.log(getPrimaryItemId(order));" }],
+    suspects: ["order", "item", "id"],
+    snippets: [],
+    summary: "Traced crash to src/cart.js:16 in getPrimaryItemId. Reached from src/crash.js:4.",
+    handoff: ["Inspect src/cart.js:16 — return order.item.id;"],
+  },
+  gitInvestigation: {
+    evidence: { available: true, branch: "main", head: "abc1234", recentCommits: [], commitsTouchingSuspects: [], blame: [] },
+    pullRequests: [],
+    suspects: [
+      {
+        sha: "deadbeef1111",
+        author: "Ada",
+        date: "2026-09-10",
+        subject: "unguarded item.id access",
+        score: 0.9,
+        reasons: ["git blame on src/cart.js:16"],
+      },
+    ],
+    introducing: {
+      sha: "deadbeef1111",
+      author: "Ada",
+      date: "2026-09-10",
+      subject: "unguarded item.id access",
+      score: 0.9,
+      reasons: ["git blame on src/cart.js:16"],
+    },
+    summary: "Likely introduced by deadbeef (Ada, 2026-09-10): unguarded item.id access.",
+    handoff: ["Inspect commit deadbeef — unguarded item.id access (git blame on src/cart.js:16)."],
+  },
+  dependencyAnalysis: {
+    evidence: { ecosystem: "node", hits: [] },
+    issues: [{ kind: "none", detail: "No dependency or version signal in the error.", likelihood: 0.15 }],
+    likelyDependencyBug: false,
+    summary: "No strong dependency/version signal (node). Treat this as application code unless a later agent disagrees.",
+    handoff: ["Prefer a source-level fix; dependency/version looks unlikely."],
+  },
 };
 
 describe("investigation board", () => {
@@ -141,7 +201,11 @@ describe("investigation board", () => {
     expect(html).toContain("80%");
     expect(html).toContain("NaN !== 10");
     expect(html).toContain("Log Analyzer");
-    expect(html).toContain("Understand logs, exceptions and stack traces");
+    expect(html).toContain("Code Investigator");
+    expect(html).toContain("Git Investigator");
+    expect(html).toContain("Dependency Analyst");
+    expect(html).toContain("unguarded item.id access");
+    expect(html).toContain("Trace the error through the codebase");
     expect(html).toContain("Core agents");
   });
 

@@ -18,10 +18,12 @@ describe("Log Analyzer", () => {
   it("finds the crash site and primary exception from a Node stack", async () => {
     const agent = new LogAnalyzerAgent();
     const { result, run } = await agent.run({
-      repoPath: "/repo",
-      stackTrace: `TypeError: Cannot read properties of undefined (reading 'id')
+      input: {
+        repoPath: "/repo",
+        stackTrace: `TypeError: Cannot read properties of undefined (reading 'id')
     at getPrimaryItemId (/repo/src/cart.js:16:21)
     at ModuleJob.run (node:internal/modules/esm/module_job:234:25)`,
+      },
     });
 
     expect(run.status).toBe("ok");

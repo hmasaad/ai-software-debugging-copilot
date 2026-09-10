@@ -101,13 +101,21 @@ describe("debugBug pipeline", () => {
 
     expect(report.reproduction.reproduced).toBe(true);
     expect(report.agentRuns[0]?.id).toBe("log-analyzer");
+    expect(report.agentRuns.some((run) => run.id === "code-investigator")).toBe(true);
+    expect(report.agentRuns.some((run) => run.id === "git-investigator")).toBe(true);
+    expect(report.agentRuns.some((run) => run.id === "dependency-analyst")).toBe(true);
     expect(report.logAnalysis.summary).toBeTruthy();
+    expect(report.codeInvestigation.trace.length).toBeGreaterThan(0);
+    expect(report.gitInvestigation.evidence.available).toBe(true);
+    expect(report.dependencyAnalysis.likelyDependencyBug).toBe(false);
     expect(report.proposedFix.applied).toBe(true);
     expect(report.verification.passed).toBe(true);
     expect(await readFile(path.join(fixture.dir, "src/cart.js"), "utf8")).toContain("item.qty ?? 1");
 
     const markdown = renderMarkdownReport(report);
     expect(markdown).toContain("Root cause analysis");
+    expect(markdown).toContain("Git Investigator");
+    expect(markdown).toContain("Dependency Analyst");
     expect(markdown).toContain("Proposed fix");
     expect(markdown).toContain("Verification");
     expect(await readFile(path.join(fixture.dir, "debug-report.md"), "utf8")).toContain("Debugging report");

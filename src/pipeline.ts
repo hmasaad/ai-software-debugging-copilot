@@ -4,6 +4,9 @@ import { applyEdits, restoreFiles, snapshotFiles } from "./analysis/patch.js";
 import { verifyFix } from "./analysis/verify.js";
 import { createInvestigator } from "./llm/index.js";
 import { LogAnalyzerAgent } from "./agents/log-analyzer.js";
+import { CodeInvestigatorAgent } from "./agents/code-investigator.js";
+import { GitInvestigatorAgent } from "./agents/git-investigator.js";
+import { DependencyAnalystAgent } from "./agents/dependency-analyst.js";
 import { loadConfig, resolveRepoPath } from "./config.js";
 import { renderMarkdownReport, writeReports } from "./report/markdown.js";
 import type {
@@ -34,11 +37,44 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     agent: logAnalyzer.name,
     message: `${logAnalyzer.responsibility}...`,
   });
-  const { result: logAnalysis, run: logRun } = await logAnalyzer.run(bug);
+  const { result: logAnalysis, run: logRun } = await logAnalyzer.run({ input: bug });
   agentRuns.push(logRun);
+
+  emit({
+    stage: "code-investigator",
+    agent: "Code Investigator",
+    message: "Trace the error through the codebase...",
+  });
+  const codeInvestigator = new CodeInvestigatorAgent();
+  const { result: codeInvestigation, run: codeRun } = await codeInvestigator.run({
+    input: bug,
+    logAnalysis,
+  });
+  agentRuns.push(codeRun);
+
+  emit({
+    stage: "git-investigator",
+    agent: "Git Investigator",
+    message: "Find commits/PRs that introduced the problem...",
+  });
+  emit({
+    stage: "dependency-analyst",
+    agent: "Dependency Analyst",
+    message: "Detect dependency/version-related issues...",
+  });
+  const gitInvestigator = new GitInvestigatorAgent();
+  const dependencyAnalyst = new DependencyAnalystAgent();
+  const [{ result: gitInvestigation, run: gitRun }, { result: dependencyAnalysis, run: depRun }] = await Promise.all([
+    gitInvestigator.run({ input: bug, logAnalysis, codeInvestigation }),
+    dependencyAnalyst.run({ input: bug, logAnalysis, codeInvestigation }),
+  ]);
+  agentRuns.push(gitRun, depRun);
 
   emit({ stage: "collect", message: "Collecting remaining evidence (source, git, PRs, tests, dependencies, runtime)..." });
   const evidence = await collectEvidence(bug, logAnalysis);
+  evidence.codeInvestigation = codeInvestigation;
+  evidence.gitInvestigation = gitInvestigation;
+  evidence.dependencyAnalysis = dependencyAnalysis;
 
   emit({ stage: "reproduce", message: runTests ? "Attempting to reproduce the failure..." : "Skipping live reproduction." });
   const reproduction = await reproduceBug(bug, evidence, runTests);
@@ -120,6 +156,9 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     notes,
     agentRuns,
     logAnalysis,
+    codeInvestigation,
+    gitInvestigation,
+    dependencyAnalysis,
   };
 
   emit({ stage: "report", message: "Writing debugging report..." });

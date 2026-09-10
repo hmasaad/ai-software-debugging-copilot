@@ -8,7 +8,7 @@ import type {
   RepeatingLogLine,
   StackFrame,
 } from "../types.js";
-import { LOG_ANALYZER, type SpecialistAgent } from "./types.js";
+import { LOG_ANALYZER, type AgentContext, type SpecialistAgent } from "./types.js";
 
 /**
  * Log Analyzer — the first core specialist.
@@ -19,9 +19,9 @@ export class LogAnalyzerAgent implements SpecialistAgent<LogAnalysis> {
   readonly name = LOG_ANALYZER.name;
   readonly responsibility = LOG_ANALYZER.responsibility;
 
-  async run(input: BugInput): Promise<{ result: LogAnalysis; run: AgentRun }> {
+  async run(ctx: AgentContext): Promise<{ result: LogAnalysis; run: AgentRun }> {
     const started = Date.now();
-    const result = await this.analyze(input);
+    const result = await this.analyze(ctx.input);
     return {
       result,
       run: {

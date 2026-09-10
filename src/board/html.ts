@@ -1,4 +1,4 @@
-import type { AgentRun, DebuggingReport, Hypothesis, LogAnalysis, StackFrame } from "../types.js";
+import type { AgentRun, CodeInvestigation, DebuggingReport, DependencyAnalysis, GitInvestigation, Hypothesis, LogAnalysis, StackFrame } from "../types.js";
 
 export function renderInvestigationBoard(report: DebuggingReport): string {
   const e = report.evidence;
@@ -79,6 +79,9 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
     <article class="col" id="col-evidence">
       <h2>Collect evidence</h2>
       ${logAnalyzerCard(report.logAnalysis)}
+      ${codeInvestigatorCard(report.codeInvestigation)}
+      ${gitInvestigatorCard(report.gitInvestigation)}
+      ${dependencyAnalystCard(report.dependencyAnalysis)}
       <div class="card">
         <h3>Error</h3>
         <p class="lead">${esc(report.error.type ?? "Error")}: ${esc(report.error.message)}</p>
@@ -233,6 +236,87 @@ function agentsStrip(runs: AgentRun[]): string {
         .join("")}
     </ul>
   </section>`;
+}
+
+function codeInvestigatorCard(analysis: CodeInvestigation): string {
+  const steps = analysis.trace
+    .map(
+      (step) =>
+        `<li><code>${esc(step.role)}</code> <code>${esc(step.file)}${step.line ? `:${step.line}` : ""}</code>${step.functionName ? ` ${esc(step.functionName)}` : ""} — ${esc(step.note)}</li>`,
+    )
+    .join("");
+  const suspects = analysis.suspects.length
+    ? `<p class="meta">Suspects ${analysis.suspects.map((name) => `<code>${esc(name)}</code>`).join(" ")}</p>`
+    : "";
+  const callers = analysis.callers.length
+    ? `<ul>${analysis.callers
+        .slice(0, 6)
+        .map((caller) => `<li><code>${esc(caller.file)}:${caller.line}</code> ${esc(clip(caller.text, 120))}</li>`)
+        .join("")}</ul>`
+    : "";
+  const handoff = analysis.handoff.length
+    ? `<ul>${analysis.handoff.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>`
+    : "";
+
+  return `<div class="card">
+    <h3>Code Investigator</h3>
+    <p class="meta">Trace the error through the codebase</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    ${steps ? `<ol class="frames">${steps}</ol>` : ""}
+    ${suspects}
+    ${callers}
+    ${handoff}
+  </div>`;
+}
+
+function gitInvestigatorCard(analysis: GitInvestigation): string {
+  const introducing = analysis.introducing
+    ? `<p class="meta">Introducing <code>${esc(analysis.introducing.sha.slice(0, 8))}</code> ${esc(analysis.introducing.author)} (${esc(analysis.introducing.date)}) ${esc(analysis.introducing.subject)}</p>`
+    : "";
+  const suspects = analysis.suspects
+    .slice(0, 6)
+    .map(
+      (commit) =>
+        `<li><code>${esc(commit.sha.slice(0, 8))}</code> ${esc(commit.date)} ${esc(commit.author)}: ${esc(commit.subject)} — ${esc(commit.reasons.join("; "))}</li>`,
+    )
+    .join("");
+  const prs = analysis.pullRequests
+    .slice(0, 4)
+    .map((pr) => `<li>#${pr.number} ${esc(pr.title)} (${esc(pr.state)})</li>`)
+    .join("");
+  const handoff = analysis.handoff.length
+    ? `<ul>${analysis.handoff.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>`
+    : "";
+
+  return `<div class="card">
+    <h3>Git Investigator</h3>
+    <p class="meta">Find commits/PRs that introduced the problem</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    ${introducing}
+    ${suspects ? `<ul>${suspects}</ul>` : ""}
+    ${prs ? `<ul>${prs}</ul>` : ""}
+    ${handoff}
+  </div>`;
+}
+
+function dependencyAnalystCard(analysis: DependencyAnalysis): string {
+  const issues = analysis.issues
+    .map(
+      (issue) =>
+        `<li><code>${esc(issue.kind)}</code>${issue.package ? ` <code>${esc(issue.package)}</code>` : ""} — ${esc(issue.detail)}</li>`,
+    )
+    .join("");
+  const handoff = analysis.handoff.length
+    ? `<ul>${analysis.handoff.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>`
+    : "";
+
+  return `<div class="card ${analysis.likelyDependencyBug ? "tint-warn" : ""}">
+    <h3>Dependency Analyst</h3>
+    <p class="meta">Detect dependency/version-related issues</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    ${issues ? `<ul>${issues}</ul>` : ""}
+    ${handoff}
+  </div>`;
 }
 
 function logAnalyzerCard(analysis: LogAnalysis): string {

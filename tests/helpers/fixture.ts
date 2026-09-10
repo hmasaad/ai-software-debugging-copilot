@@ -36,6 +36,18 @@ export async function createCartFixture(): Promise<FixtureRepo> {
 export function cartTotal(items) {
   return items.reduce((sum, item) => sum + lineTotal(item), 0);
 }
+
+export function getPrimaryItemId(order) {
+  return order.item.id;
+}
+`,
+  );
+
+  await writeFile(
+    path.join(dir, "src/crash.js"),
+    `import { getPrimaryItemId } from "./cart.js";
+const order = { customer: "ada" };
+console.log(getPrimaryItemId(order));
 `,
   );
 

@@ -85,6 +85,74 @@ export function renderMarkdownReport(report: DebuggingReport): string {
         ].join("\n")
       : "",
     "",
+    report.codeInvestigation
+      ? [
+          "## Code Investigator",
+          "",
+          report.codeInvestigation.summary,
+          report.codeInvestigation.trace.length
+            ? `\nTrace:\n${report.codeInvestigation.trace
+                .map(
+                  (step) =>
+                    `- **${step.role}** \`${step.file}${step.line ? `:${step.line}` : ""}\`${step.functionName ? ` ${step.functionName}` : ""} — ${step.note}`,
+                )
+                .join("\n")}`
+            : "",
+          report.codeInvestigation.suspects.length
+            ? `\nSuspects: ${report.codeInvestigation.suspects.map((name) => `\`${name}\``).join(", ")}`
+            : "",
+          report.codeInvestigation.handoff.length
+            ? `\nHandoff:\n${report.codeInvestigation.handoff.map((note) => `- ${note}`).join("\n")}`
+            : "",
+        ].join("\n")
+      : "",
+    "",
+    report.gitInvestigation
+      ? [
+          "## Git Investigator",
+          "",
+          report.gitInvestigation.summary,
+          report.gitInvestigation.introducing
+            ? `\nLikely introducing commit: \`${report.gitInvestigation.introducing.sha.slice(0, 8)}\` ${report.gitInvestigation.introducing.author} (${report.gitInvestigation.introducing.date}): ${report.gitInvestigation.introducing.subject}`
+            : "",
+          report.gitInvestigation.suspects.length
+            ? `\nSuspects:\n${report.gitInvestigation.suspects
+                .map(
+                  (commit) =>
+                    `- \`${commit.sha.slice(0, 8)}\` ${commit.date} ${commit.author}: ${commit.subject} — ${commit.reasons.join("; ")}`,
+                )
+                .join("\n")}`
+            : "",
+          report.gitInvestigation.pullRequests.length
+            ? `\nRelated PRs:\n${report.gitInvestigation.pullRequests
+                .map((pr) => `- [#${pr.number}](${pr.url}) ${pr.title} (${pr.state})`)
+                .join("\n")}`
+            : "",
+          report.gitInvestigation.handoff.length
+            ? `\nHandoff:\n${report.gitInvestigation.handoff.map((note) => `- ${note}`).join("\n")}`
+            : "",
+        ].join("\n")
+      : "",
+    "",
+    report.dependencyAnalysis
+      ? [
+          "## Dependency Analyst",
+          "",
+          report.dependencyAnalysis.summary,
+          report.dependencyAnalysis.issues.length
+            ? `\nIssues:\n${report.dependencyAnalysis.issues
+                .map(
+                  (issue) =>
+                    `- **${issue.kind}**${issue.package ? ` \`${issue.package}\`` : ""} (${pct(issue.likelihood)}): ${issue.detail}`,
+                )
+                .join("\n")}`
+            : "",
+          report.dependencyAnalysis.handoff.length
+            ? `\nHandoff:\n${report.dependencyAnalysis.handoff.map((note) => `- ${note}`).join("\n")}`
+            : "",
+        ].join("\n")
+      : "",
+    "",
     "## Error",
     "",
     `\`\`\`\n${e.error.type ? `${e.error.type}: ` : ""}${e.error.message}\n\`\`\``,

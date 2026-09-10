@@ -54,6 +54,46 @@ export function buildEvidenceBrief(
         : "",
       evidence.logAnalysis?.handoff.length ? `Handoff:\n${evidence.logAnalysis.handoff.map((h) => `- ${h}`).join("\n")}` : "",
       "",
+      `## Code Investigator`,
+      evidence.codeInvestigation?.summary ?? "",
+      evidence.codeInvestigation?.trace.length
+        ? `Trace:\n${evidence.codeInvestigation.trace
+            .map((step) => `- ${step.role} ${step.file}${step.line ? `:${step.line}` : ""} ${step.note}`)
+            .join("\n")}`
+        : "",
+      evidence.codeInvestigation?.suspects.length
+        ? `Suspects: ${evidence.codeInvestigation.suspects.join(", ")}`
+        : "",
+      evidence.codeInvestigation?.handoff.length
+        ? `Handoff:\n${evidence.codeInvestigation.handoff.map((h) => `- ${h}`).join("\n")}`
+        : "",
+      "",
+      `## Git Investigator`,
+      evidence.gitInvestigation?.summary ?? "",
+      evidence.gitInvestigation?.introducing
+        ? `Likely introducing commit: ${evidence.gitInvestigation.introducing.sha.slice(0, 8)} ${evidence.gitInvestigation.introducing.author} (${evidence.gitInvestigation.introducing.date}): ${evidence.gitInvestigation.introducing.subject}`
+        : "",
+      evidence.gitInvestigation?.suspects.length
+        ? `Suspects:\n${evidence.gitInvestigation.suspects
+            .map((c) => `- ${c.sha.slice(0, 8)} ${c.date} ${c.author}: ${c.subject} (${c.reasons.join("; ")})`)
+            .join("\n")}`
+        : "",
+      evidence.gitInvestigation?.handoff.length
+        ? `Handoff:\n${evidence.gitInvestigation.handoff.map((h) => `- ${h}`).join("\n")}`
+        : "",
+      "",
+      `## Dependency Analyst`,
+      evidence.dependencyAnalysis?.summary ?? "",
+      evidence.dependencyAnalysis?.likelyDependencyBug ? "Treat as a dependency/version issue until proven otherwise." : "",
+      evidence.dependencyAnalysis?.issues.length
+        ? `Issues:\n${evidence.dependencyAnalysis.issues
+            .map((issue) => `- ${issue.kind}${issue.package ? ` ${issue.package}` : ""}: ${issue.detail}`)
+            .join("\n")}`
+        : "",
+      evidence.dependencyAnalysis?.handoff.length
+        ? `Handoff:\n${evidence.dependencyAnalysis.handoff.map((h) => `- ${h}`).join("\n")}`
+        : "",
+      "",
       `## Bug`,
       input.message ? `Message: ${input.message}` : "",
       `Parsed: ${evidence.error.type ?? "Error"}: ${evidence.error.message}`,
@@ -120,7 +160,9 @@ Return ONLY valid JSON with this shape:
 }
 confidence and likelihood are numbers between 0 and 1.
 Prefer project frames over framework/library frames.
-Recent git blame + failing tests that overlap a stack frame are strong evidence.`;
+Recent git blame + failing tests that overlap a stack frame are strong evidence.
+If Git Investigator names an introducing commit, treat that as historical context, not proof by itself.
+If Dependency Analyst marks a likely dependency bug, prefer install/version hypotheses over application-code patches.`;
 }
 
 export function fixSystemPrompt(): string {

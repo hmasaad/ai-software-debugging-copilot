@@ -52,8 +52,19 @@ The copilot is an **orchestrator**, not one giant debugging prompt. Specialists 
 | Agent | Responsibility |
 |---|---|
 | **Log Analyzer** | Understand logs, exceptions and stack traces |
+| **Code Investigator** | Trace the error through the codebase |
+| **Git Investigator** | Find commits/PRs that introduced the problem |
+| **Dependency Analyst** | Detect dependency/version-related issues |
 
-Log Analyzer runs first. It parses exception chains (`Caused by`, nested errors), finds the crash site (top project frame), counts log levels, extracts timestamps and correlation IDs, and writes a handoff for later stages. Root-cause and fix prompts consume that briefing instead of re-reading raw logs from scratch.
+Log Analyzer runs first. It parses exception chains (`Caused by`, nested errors), finds the crash site (top project frame), counts log levels, extracts timestamps and correlation IDs, and writes a handoff for later stages.
+
+Code Investigator consumes that crash site and walks the source: enclosing function, inbound callers, callees, and the crashing expression.
+
+Git Investigator ranks introducing commits with blame on the crash line, pickaxe (`git log -S`) on Code Investigator suspects, and overlapping merged PRs.
+
+Dependency Analyst classifies missing modules, lockfile drift, peer-dep failures, and ESM/CJS mismatches so later stages do not patch application code for an install problem.
+
+Root-cause and fix prompts consume those briefings instead of re-reading raw logs and files from scratch.
 
 ## Setup
 
@@ -170,7 +181,7 @@ Use `--apply` only in a throwaway job or bot branch — the default is report-on
 src/
   cli.ts                 CLI entry
   pipeline.ts            Orchestrator
-  agents/                Specialist agents (Log Analyzer first)
+  agents/                Specialist agents (Log Analyzer, Code Investigator, Git Investigator, Dependency Analyst)
   collectors/            Evidence: source, git, PRs, tests, deps, runtime
   analysis/              Reproduce, patch, verify
   llm/                   heuristic | openai | anthropic | cursor

@@ -122,6 +122,9 @@ export interface EvidenceBundle {
   dependencies: DependencyEvidence;
   runtime: RuntimeContext;
   logAnalysis?: LogAnalysis;
+  codeInvestigation?: CodeInvestigation;
+  gitInvestigation?: GitInvestigation;
+  dependencyAnalysis?: DependencyAnalysis;
 }
 
 export interface ReproductionResult {
@@ -195,6 +198,9 @@ export interface DebuggingReport {
   notes: string[];
   agentRuns: AgentRun[];
   logAnalysis: LogAnalysis;
+  codeInvestigation: CodeInvestigation;
+  gitInvestigation: GitInvestigation;
+  dependencyAnalysis: DependencyAnalysis;
 }
 
 export interface PipelineOptions {
@@ -216,6 +222,9 @@ export type InvestigatorKind = "auto" | "heuristic" | "openai" | "anthropic" | "
 
 export type PipelineStage =
   | "log-analyzer"
+  | "code-investigator"
+  | "git-investigator"
+  | "dependency-analyst"
   | "collect"
   | "reproduce"
   | "analyze"
@@ -241,7 +250,7 @@ export interface Investigator {
   ): Promise<FixProposal>;
 }
 
-export type AgentId = "log-analyzer";
+export type AgentId = "log-analyzer" | "code-investigator" | "git-investigator" | "dependency-analyst";
 
 export interface AgentRun {
   id: AgentId;
@@ -281,6 +290,86 @@ export interface LogAnalysis {
   timestamps: string[];
   correlationIds: string[];
   repeating: RepeatingLogLine[];
+  summary: string;
+  handoff: string[];
+}
+
+export type TraceRole = "entry" | "caller" | "crash-site" | "callee";
+
+export interface TraceStep {
+  file: string;
+  line?: number;
+  functionName?: string;
+  role: TraceRole;
+  expression?: string;
+  note: string;
+}
+
+export interface FunctionSpan {
+  file: string;
+  name: string;
+  startLine: number;
+  endLine: number;
+  signature: string;
+}
+
+export interface CodeCaller {
+  file: string;
+  line: number;
+  text: string;
+}
+
+/** Output of the Code Investigator: a path from the crash through source. */
+export interface CodeInvestigation {
+  origin?: StackFrame;
+  trace: TraceStep[];
+  functions: FunctionSpan[];
+  callers: CodeCaller[];
+  suspects: string[];
+  snippets: SourceSnippet[];
+  summary: string;
+  handoff: string[];
+}
+
+export interface GitSuspect {
+  sha: string;
+  author: string;
+  date: string;
+  subject: string;
+  score: number;
+  reasons: string[];
+}
+
+/** Output of the Git Investigator: commits/PRs that likely introduced the problem. */
+export interface GitInvestigation {
+  evidence: GitEvidence;
+  pullRequests: PullRequestEvidence[];
+  suspects: GitSuspect[];
+  introducing?: GitSuspect;
+  summary: string;
+  handoff: string[];
+}
+
+export type DependencyIssueKind =
+  | "missing-module"
+  | "version-mismatch"
+  | "peer-dependency"
+  | "esm-cjs"
+  | "lockfile-drift"
+  | "none";
+
+export interface DependencyIssue {
+  kind: DependencyIssueKind;
+  package?: string;
+  detail: string;
+  likelihood: number;
+}
+
+/** Output of the Dependency Analyst: version/install related issues. */
+export interface DependencyAnalysis {
+  evidence: DependencyEvidence;
+  issues: DependencyIssue[];
+  likelyDependencyBug: boolean;
   summary: string;
   handoff: string[];
 }
