@@ -148,27 +148,52 @@ Potential environment mismatch detected.
 
 It also records Dart, Gradle, Kotlin, OS, device, build flavor, environment variables, pinned dependencies, git branch, and commit SHA. Pass `--baseline-env` or describe the other machine in `--context`.
 
-**Production incident mode** connects Crashlytics / Sentry / logs to the same investigation:
+**Production Incident Investigator** turns Crashlytics / Sentry / logs / metrics into an automatic investigation:
 
 ```
-Crashlytics / Sentry / Logs
-             ↓
-       Incident Agent
-             ↓
-     Group similar crashes
-             ↓
-       Find affected version
-             ↓
-       Find first occurrence
-             ↓
-       Git regression
-             ↓
-       Root cause
-             ↓
-       Suggested fix
+                 PRODUCTION INCIDENT
+                         │
+                         ↓
+                 Incident Detection
+                         │
+          ┌──────────────┼──────────────┐
+          ↓              ↓              ↓
+       Logs           Crashes          Metrics
+          │              │              │
+          └──────────────┼──────────────┘
+                         ↓
+                 Correlation Engine
+                         ↓
+                  Root Cause Analysis
+                         ↓
+                  Blast-Radius Analysis
+                         ↓
+                  Regression Detection
+                         ↓
+                 Fix / Rollback Plan
+                         ↓
+                    Validation
+                         ↓
+                  Incident Report
 ```
 
-Pass `--source crashlytics|sentry|logs`, `--version`, `--affected-users`, and `--first-seen` (or put those fields in `--context`). Incident Agent groups similar crashes from debugging memory, ties the blast to a git introducing commit, and recommends rollback vs hotfix:
+The **Incident Correlation Engine** does not debug one error in isolation. It connects overlapping signals automatically:
+
+```
+Crash spike
+   +
+API latency spike
+   +
+Deployment 15 minutes earlier
+   +
+New dependency
+   +
+Specific app version
+        ↓
+Potential incident
+```
+
+`debug-copilot incident --source crashlytics --version 1.0.181 --affected-users 327 --first-seen "14:32 UTC" --metrics '{"errorRate":"4.2%","p95":1800,"deployedMinutesAgo":15,"newDependency":"firebase_core"}'` (or put those fields in `--context`). When those events line up, the copilot treats them as one incident and recommends rollback vs hotfix:
 
 ```
 Production Crash
@@ -378,6 +403,7 @@ npx tsx src/cli.ts evals
 
 ```
 debug-copilot [options]
+debug-copilot incident [options]
 debug-copilot evals
 
   --repo <path>           Repository to investigate (default: cwd)
@@ -390,6 +416,7 @@ debug-copilot evals
   --affected-users <n>    Production crash user count
   --first-seen <text>     First occurrence timestamp
   --source <name>         crashlytics | sentry | logs
+  --metrics <json>        Production metrics (errorRate, p95, crash-free)
   --baseline-env <path>   JSON toolchain snapshot
   --autonomous            Investigate in an isolated sandbox
   --keep-sandbox          Leave the sandbox directory on disk

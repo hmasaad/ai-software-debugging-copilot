@@ -18,6 +18,7 @@ import type {
   Investigator,
   LogAnalysis,
   NetworkAnalysis,
+  ProductionInvestigation,
   ReproductionAnalysis,
   RootCauseAnalysis,
   SpecialistFindings,
@@ -43,6 +44,7 @@ export interface AgentContext {
   environment?: EnvironmentAnalysis;
   specialists?: SpecialistFindings;
   memory?: DebuggingMemory;
+  investigation?: ProductionInvestigation;
   investigator?: Investigator;
   runTests?: boolean;
   apply?: boolean;

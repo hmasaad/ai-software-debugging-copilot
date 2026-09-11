@@ -54,8 +54,19 @@ export { recallIncidents, rememberIncident, renderMemoryAscii } from "./analysis
 export {
   buildProductionIncident,
   parseProductionSignals,
+  recommendProductionAction,
   renderProductionIncidentAscii,
 } from "./analysis/production.js";
+export {
+  investigateProductionIncident,
+  detectIncident,
+  correlateIncident,
+  buildRollbackPlan,
+  parseProductionMetrics,
+  renderProductionInvestigatorAscii,
+  PRODUCTION_INVESTIGATOR_FLOW,
+} from "./analysis/incident-investigator.js";
+export { collectCorrelationEvents, renderCorrelationAscii } from "./analysis/correlation-engine.js";
 export { runEvalSuite, renderEvalDashboard, renderEvalFooter, evalsBelowSlo } from "./evals/run.js";
 export { KNOWN_BUGS, buildKnownBugs } from "./evals/dataset.js";
 export type {
@@ -85,6 +96,8 @@ export type {
   BlastRadiusAnalysis,
   DebuggingMemory,
   ProductionIncident,
+  ProductionInvestigation,
+  IncidentCorrelation,
   EvalRun,
   EvalMetrics,
   AgentRun,

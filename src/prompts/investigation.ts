@@ -278,6 +278,19 @@ export function buildEvidenceBrief(
             .filter(Boolean)
             .join("\n")
         : "",
+      evidence.productionInvestigation
+        ? [
+            "Production incident investigator:",
+            evidence.productionInvestigation.detection.summary,
+            `Logs ${evidence.productionInvestigation.logs.length} · crashes ${evidence.productionInvestigation.crashes.length}`,
+            evidence.productionInvestigation.correlation.summary,
+            ...evidence.productionInvestigation.correlation.events
+              .filter((event) => event.present)
+              .map((event) => `- ${event.label}: ${event.detail}`),
+            evidence.productionInvestigation.rollbackPlan.summary,
+            ...evidence.productionInvestigation.rollbackPlan.steps.map((step, index) => `${index + 1}. ${step}`),
+          ].join("\n")
+        : "",
       "",
       `## Bug`,
       input.message ? `Message: ${input.message}` : "",

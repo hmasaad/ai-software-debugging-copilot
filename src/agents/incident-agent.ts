@@ -11,6 +11,7 @@ import type {
   IncidentSeverity,
   IncidentStatus,
   LogAnalysis,
+  ProductionInvestigation,
   ReproductionAnalysis,
   RootCauseAnalysis,
   TestAnalysis,
@@ -70,6 +71,7 @@ export class IncidentAgent implements SpecialistAgent<IncidentReport> {
       validation: ctx.validationAnalysis,
       memory: ctx.memory,
       production,
+      investigation: ctx.investigation,
     });
     return report;
   }
@@ -88,6 +90,7 @@ export function buildIncidentReport(input: {
   validation?: ValidationAnalysis;
   memory?: DebuggingMemory;
   production?: ReturnType<typeof buildProductionIncident>;
+  investigation?: ProductionInvestigation;
 }): IncidentReport {
   const error = input.logAnalysis?.error;
   const crash = input.logAnalysis?.crashSite ?? input.codeInvestigation?.origin;
@@ -154,6 +157,23 @@ export function buildIncidentReport(input: {
         ]
           .filter((line): line is string => Boolean(line))
           .join("\n")
+      : "",
+    input.investigation
+      ? [
+          `### Correlation`,
+          input.investigation.correlation.summary,
+          ...input.investigation.correlation.events
+            .filter((event) => event.present)
+            .map((event) => `- ${event.label}: ${event.detail}`),
+          ...input.investigation.correlation.links.map(
+            (link) => `- ${link.left} ↔ ${link.right}: ${link.reason}`,
+          ),
+          "",
+          `### Fix / Rollback Plan`,
+          input.investigation.rollbackPlan.summary,
+          ...input.investigation.rollbackPlan.steps.map((step, index) => `${index + 1}. ${step}`),
+          "",
+        ].join("\n")
       : "",
     `### Follow-ups`,
     ...(followUps.length ? followUps.map((item) => `- ${item}`) : ["- None."]),
@@ -242,8 +262,13 @@ function buildFix(fix: FixAnalysis | undefined): string {
 
 function buildTimeline(input: Parameters<typeof buildIncidentReport>[0]): IncidentEvent[] {
   const events: IncidentEvent[] = [];
-  if (input.logAnalysis?.crashSite || input.logAnalysis?.summary) {
+  if (input.investigation?.detection.detected) {
+    events.push({ label: "Detected", detail: input.investigation.detection.summary });
+  } else if (input.logAnalysis?.crashSite || input.logAnalysis?.summary) {
     events.push({ label: "Detected", detail: input.logAnalysis.summary });
+  }
+  if (input.investigation?.correlation.links.length) {
+    events.push({ label: "Correlated", detail: input.investigation.correlation.summary });
   }
   if (input.codeInvestigation?.summary) {
     events.push({ label: "Traced", detail: input.codeInvestigation.summary });
@@ -303,6 +328,7 @@ function buildFollowUps(input: Parameters<typeof buildIncidentReport>[0]): strin
     ...(input.production?.recommendedAction === "rollback"
       ? ["Ship a rollback or a targeted hotfix; do not wait on a large application patch."]
       : []),
+    ...(input.investigation?.rollbackPlan.steps[0] ? [input.investigation.rollbackPlan.steps[0]] : []),
     ...(input.memory?.matches.length
       ? [`${input.memory.matches.length} similar historical crash${input.memory.matches.length === 1 ? "" : "es"} grouped with this incident.`]
       : []),

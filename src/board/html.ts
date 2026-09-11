@@ -14,6 +14,7 @@ import type {
   IncidentReport,
   LogAnalysis,
   ProductionIncident,
+  ProductionInvestigation,
   ReproductionAnalysis,
   SandboxSession,
   SpecialistFindings,
@@ -21,6 +22,7 @@ import type {
   TestAnalysis,
   ValidationAnalysis,
 } from "../types.js";
+import { PRODUCTION_INVESTIGATOR_FLOW } from "../analysis/incident-investigator.js";
 
 export function renderInvestigationBoard(report: DebuggingReport): string {
   const e = report.evidence;
@@ -82,6 +84,28 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
             ? "Tests failed"
             : "Not run",
     },
+    ...(report.productionInvestigation
+      ? [
+          {
+            id: "detect",
+            label: "Detect",
+            state: "done" as const,
+            detail: report.productionInvestigation.detection.severity.toUpperCase(),
+          },
+          {
+            id: "correlate",
+            label: "Correlate",
+            state: report.productionInvestigation.correlation.correlated ? ("done" as const) : ("pending" as const),
+            detail: report.productionInvestigation.correlation.summary,
+          },
+          {
+            id: "rollback",
+            label: "Rollback",
+            state: report.productionInvestigation.rollbackPlan.action === "investigate" ? ("skip" as const) : ("done" as const),
+            detail: report.productionInvestigation.rollbackPlan.summary,
+          },
+        ]
+      : []),
   ];
 
   return `<!DOCTYPE html>
@@ -129,6 +153,7 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
   ${incidentBanner(report.incidentReport)}
 
   ${report.production ? productionCard(report.production) : ""}
+  ${report.productionInvestigation ? investigatorCard(report.productionInvestigation) : ""}
   ${report.classification ? classificationCard(report.classification) : ""}
   ${report.environment ? environmentCard(report.environment) : ""}
   ${report.blastRadius ? blastRadiusCard(report.blastRadius) : ""}
@@ -484,6 +509,45 @@ function memoryCard(memory: DebuggingMemory): string {
     ${chain}
     ${matches ? `<ul>${matches}</ul>` : ""}
   </div>`;
+}
+
+function investigatorCard(investigation: ProductionInvestigation): string {
+  const metrics = investigation.metrics
+    ? [
+        investigation.metrics.errorRate != null ? `error rate ${Math.round(investigation.metrics.errorRate * 1000) / 10}%` : undefined,
+        investigation.metrics.latencyP95Ms != null ? `p95 ${Math.round(investigation.metrics.latencyP95Ms)}ms` : undefined,
+        investigation.metrics.crashFreeUsers != null
+          ? `crash-free ${Math.round(investigation.metrics.crashFreeUsers * 1000) / 10}%`
+          : undefined,
+      ]
+        .filter((item): item is string => Boolean(item))
+        .join(" · ")
+    : "none";
+  const events = investigation.correlation.events
+    .filter((event) => event.present)
+    .map((event) => `<li><strong>${esc(event.label)}</strong> — ${esc(event.detail)}</li>`)
+    .join("");
+  const links = investigation.correlation.links
+    .map((link) => `<li>${esc(link.left)} ↔ ${esc(link.right)} — ${esc(link.reason)}</li>`)
+    .join("");
+  const steps = investigation.rollbackPlan.steps.map((step) => `<li>${esc(step)}</li>`).join("");
+  const risks = investigation.rollbackPlan.risks.map((risk) => `<li>${esc(risk)}</li>`).join("");
+  return `<section class="incident" aria-label="Production incident investigator">
+    <div class="card tint-bad">
+      <h3>Production Incident Investigator</h3>
+      <p class="meta">${esc(investigation.detection.severity.toUpperCase())} · logs ${investigation.logs.length} · crashes ${investigation.crashes.length} · ${esc(metrics)}</p>
+      <p class="lead">${esc(investigation.detection.summary)}</p>
+      <h3>Incident Correlation Engine</h3>
+      <p class="lead">${esc(investigation.correlation.potentialIncident ? "Potential incident" : investigation.correlation.summary)}</p>
+      ${events ? `<ul>${events}</ul>` : ""}
+      <p class="meta">${esc(investigation.correlation.summary)}</p>
+      ${links ? `<ul>${links}</ul>` : ""}
+      <p class="lead">${esc(investigation.rollbackPlan.summary)}</p>
+      ${steps ? `<ol>${steps}</ol>` : ""}
+      ${risks ? `<p class="meta">Risks</p><ul>${risks}</ul>` : ""}
+      <pre class="ascii">${esc(PRODUCTION_INVESTIGATOR_FLOW)}</pre>
+    </div>
+  </section>`;
 }
 
 function productionCard(incident: ProductionIncident): string {
@@ -971,7 +1035,7 @@ const BOARD_CSS = `
   .card.tint-ok { border-color: var(--ok); }
   .card.tint-warn { border-color: var(--warn); }
   .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 8px 0; }
-  .code, .diff {
+  .code, .diff, .ascii {
     margin: 0;
     overflow: auto;
     max-height: 360px;
@@ -979,6 +1043,7 @@ const BOARD_CSS = `
     white-space: pre-wrap;
     word-break: break-word;
   }
+  .ascii { white-space: pre; max-height: none; }
   .diff .del { color: var(--bad); }
   .diff .add { color: var(--ok); }
   .frames { list-style: none; padding: 0; }

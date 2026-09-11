@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { renderEnvironmentAscii } from "../collectors/runtime.js";
 import { renderProductionIncidentAscii } from "../analysis/production.js";
+import { renderProductionInvestigatorAscii } from "../analysis/incident-investigator.js";
 import { renderBlastRadiusAscii } from "../analysis/blast-radius.js";
 import { renderMemoryAscii } from "../analysis/memory.js";
 import type { DebuggingReport } from "../types.js";
@@ -102,6 +103,10 @@ export function renderMarkdownReport(report: DebuggingReport): string {
       : "",
     "",
     report.memory ? `## Debugging memory\n\n${renderMemoryAscii(report.memory)}` : "",
+    "",
+    report.productionInvestigation
+      ? `## Production incident investigator\n\n${renderProductionInvestigatorAscii(report.productionInvestigation)}`
+      : "",
     "",
     report.production
       ? `## Production incident\n\n${renderProductionIncidentAscii(report.production)}${

@@ -11,6 +11,7 @@ export interface BugInput {
   affectedUsers?: number;
   firstSeen?: string;
   incidentSource?: "crashlytics" | "sentry" | "logs";
+  metrics?: ProductionMetrics;
 }
 
 export interface StackFrame {
@@ -152,6 +153,7 @@ export interface EvidenceBundle {
   specialists?: SpecialistFindings;
   blastRadius?: BlastRadiusAnalysis;
   memory?: DebuggingMemory;
+  productionInvestigation?: ProductionInvestigation;
 }
 
 export interface ReproductionResult {
@@ -246,6 +248,7 @@ export interface DebuggingReport {
   blastRadius?: BlastRadiusAnalysis;
   memory?: DebuggingMemory;
   production?: ProductionIncident;
+  productionInvestigation?: ProductionInvestigation;
 }
 
 export interface PipelineOptions {
@@ -286,6 +289,9 @@ export type PipelineStage =
   | "validation-agent"
   | "blast-radius"
   | "memory"
+  | "incident-detect"
+  | "correlation"
+  | "rollback-plan"
   | "incident-agent"
   | "sandbox"
   | "autonomous"
@@ -819,6 +825,88 @@ export interface ProductionIncident {
   suggestedFix?: string;
   confidence: number;
   recommendedAction: "rollback" | "hotfix" | "investigate";
+  summary: string;
+}
+
+export type IncidentSignalKind = "log" | "crash" | "metric";
+
+export interface IncidentSignal {
+  kind: IncidentSignalKind;
+  source: string;
+  at?: string;
+  summary: string;
+  weight: number;
+}
+
+export interface ProductionMetrics {
+  errorRate?: number;
+  baselineErrorRate?: number;
+  latencyP95Ms?: number;
+  baselineLatencyP95Ms?: number;
+  crashFreeUsers?: number;
+  requests?: number;
+  crashes?: number;
+  deployedMinutesAgo?: number;
+  newDependency?: string;
+}
+
+export interface IncidentDetection {
+  detected: boolean;
+  severity: IncidentSeverity;
+  reason: string;
+  signals: IncidentSignal[];
+  summary: string;
+}
+
+export type CorrelationEventKind =
+  | "crash-spike"
+  | "latency-spike"
+  | "deployment"
+  | "new-dependency"
+  | "app-version";
+
+export interface CorrelationEvent {
+  kind: CorrelationEventKind;
+  label: string;
+  detail: string;
+  at?: string;
+  present: boolean;
+  weight: number;
+}
+
+export interface CorrelationLink {
+  left: string;
+  right: string;
+  reason: string;
+  strength: number;
+}
+
+export interface IncidentCorrelation {
+  fingerprint?: string;
+  deploy?: { sha?: string; version?: string; at?: string; minutesBefore?: number };
+  events: CorrelationEvent[];
+  links: CorrelationLink[];
+  correlated: boolean;
+  potentialIncident: boolean;
+  newDependency?: string;
+  summary: string;
+}
+
+export interface RollbackPlan {
+  action: "rollback" | "hotfix" | "investigate";
+  target?: string;
+  steps: string[];
+  risks: string[];
+  summary: string;
+}
+
+export interface ProductionInvestigation {
+  detection: IncidentDetection;
+  logs: IncidentSignal[];
+  crashes: IncidentSignal[];
+  metrics?: ProductionMetrics;
+  correlation: IncidentCorrelation;
+  rollbackPlan: RollbackPlan;
   summary: string;
 }
 

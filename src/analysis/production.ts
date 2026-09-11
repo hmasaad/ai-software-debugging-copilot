@@ -69,8 +69,11 @@ export function buildProductionIncident(input: {
   const likelyCause = likelyCauseFrom(introducing?.subject, input.rootCause?.rootCause);
   const users = affectedUsers ?? 0;
   const recent = Boolean(introducing);
-  const recommendedAction =
-    users >= 100 && recent ? "rollback" : input.suggestedFix || input.rootCause ? "hotfix" : "investigate";
+  const recommendedAction = recommendProductionAction({
+    affectedUsers,
+    introducing: recent,
+    hasFix: Boolean(input.suggestedFix || input.rootCause),
+  });
   const confidence = scoreProductionConfidence({
     source,
     version,
@@ -100,6 +103,17 @@ export function buildProductionIncident(input: {
       .filter(Boolean)
       .join(" · "),
   };
+}
+
+export function recommendProductionAction(input: {
+  affectedUsers?: number;
+  introducing?: boolean;
+  hasFix?: boolean;
+}): ProductionIncident["recommendedAction"] {
+  const users = input.affectedUsers ?? 0;
+  if (users >= 100 && input.introducing) return "rollback";
+  if (input.hasFix) return "hotfix";
+  return "investigate";
 }
 
 export function renderProductionIncidentAscii(incident: ProductionIncident): string {

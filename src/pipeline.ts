@@ -5,6 +5,7 @@ import { attemptOutcome, attemptSummary } from "./analysis/attempts.js";
 import { buildBlastRadius } from "./analysis/blast-radius.js";
 import { recallIncidents, rememberIncident } from "./analysis/memory.js";
 import { mergeProductionInput } from "./analysis/production.js";
+import { detectIncident, investigateProductionIncident } from "./analysis/incident-investigator.js";
 import { createInvestigator } from "./llm/index.js";
 import { LogAnalyzerAgent } from "./agents/log-analyzer.js";
 import { ClassifierAgent } from "./agents/classifier-agent.js";
@@ -52,6 +53,19 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   });
   const { result: logAnalysis, run: logRun } = await new LogAnalyzerAgent().run({ input: bug });
   agentRuns.push(logRun);
+
+  const productionHint = mergeProductionInput(bug);
+  const detection = detectIncident({ bug: productionHint, logAnalysis });
+  if (detection.detected) {
+    emit({
+      stage: "incident-detect",
+      message: detection.summary,
+    });
+    emit({
+      stage: "correlation",
+      message: "Connecting crash spike, latency, deploy, dependency, and version...",
+    });
+  }
 
   emit({
     stage: "classifier",
@@ -348,19 +362,38 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   });
   evidence.memory = memory;
 
-  const productionHint = mergeProductionInput(bug);
   const productionMode = Boolean(
     productionHint.version ||
       productionHint.affectedUsers != null ||
       productionHint.firstSeen ||
-      productionHint.incidentSource,
+      productionHint.incidentSource ||
+      detection.detected,
   );
+
+  const productionInvestigation = investigateProductionIncident({
+    bug: productionHint,
+    logAnalysis,
+    gitInvestigation,
+    dependencyAnalysis,
+    memory,
+    rootCause: last.rootCause,
+    blastRadius,
+    fixAnalysis: lastFixAnalysis,
+    validation: lastValidationAnalysis,
+  });
+  if (productionInvestigation) {
+    emit({
+      stage: "rollback-plan",
+      message: productionInvestigation.rollbackPlan.summary,
+    });
+    evidence.productionInvestigation = productionInvestigation;
+  }
 
   emit({
     stage: "incident-agent",
     agent: "Incident Agent",
     message: productionMode
-      ? "Production incident mode: group similar crashes, version, first occurrence, git regression..."
+      ? "Production incident mode: correlate logs/crashes/metrics, git regression, rollback plan..."
       : "Produce an engineer-friendly incident report...",
   });
   const { result: incidentReport, run: incidentRun } = await new IncidentAgent().run({
@@ -377,6 +410,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     testAnalysis: lastTestAnalysis,
     validationAnalysis: lastValidationAnalysis,
     memory,
+    investigation: productionInvestigation,
   });
   const production = incidentReport.production;
   agentRuns.push(incidentRun);
@@ -427,6 +461,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     blastRadius,
     memory,
     production,
+    ...(productionInvestigation ? { productionInvestigation } : {}),
   };
 
   emit({ stage: "report", message: "Writing debugging report..." });

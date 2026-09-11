@@ -12,6 +12,10 @@ import { renderClassificationAscii } from "./analysis/classify.js";
 import { renderBlastRadiusAscii } from "./analysis/blast-radius.js";
 import { renderEnvironmentAscii } from "./collectors/runtime.js";
 import { renderProductionIncidentAscii } from "./analysis/production.js";
+import {
+  parseProductionMetrics,
+  renderProductionInvestigatorAscii,
+} from "./analysis/incident-investigator.js";
 import { renderMemoryAscii } from "./analysis/memory.js";
 import { evalsBelowSlo, renderEvalFooter, runEvalSuite } from "./evals/run.js";
 import { renderSpecialistsAscii } from "./agents/specialists.js";
@@ -19,15 +23,19 @@ import { serveInvestigationBoard } from "./board/serve.js";
 import type { DebuggingReport, InvestigatorKind } from "./types.js";
 
 const HELP = `Usage: debug-copilot [options]
+       debug-copilot incident [options]
        debug-copilot board [--json <path>] [--port <n>]
        debug-copilot evals
 
 Investigate a bug like an engineer: classify the failure, collect evidence,
 reproduce, rank root causes, patch, run tests, and verify — iterating when
-tests fail.
+tests fail. \`incident\` runs the production investigator: detect, correlate
+logs/crashes/metrics, rank root cause, blast radius, regression, rollback plan,
+validate, and write the incident report.
 
 Commands:
   debug-copilot [options]     Investigate a bug
+  debug-copilot incident      Investigate a production incident automatically
   debug-copilot board         Open the last investigation board
   debug-copilot evals         Run the 100-bug debugging benchmark
 
@@ -47,6 +55,7 @@ Options:
   --affected-users <n>    Production crash user count
   --first-seen <text>     First occurrence timestamp
   --source <name>         crashlytics | sentry | logs
+  --metrics <json>        Production metrics (errorRate, p95, crash-free users)
   --baseline-env <path>   JSON toolchain snapshot to compare against
   --autonomous            Investigate in an isolated sandbox
   --keep-sandbox          Leave the sandbox directory on disk
@@ -79,6 +88,7 @@ async function main(argv: string[]): Promise<void> {
       "affected-users": { type: "string" },
       "first-seen": { type: "string" },
       source: { type: "string" },
+      metrics: { type: "string" },
       "baseline-env": { type: "string" },
       apply: { type: "boolean", default: false },
       autonomous: { type: "boolean", default: false },
@@ -137,6 +147,7 @@ async function main(argv: string[]): Promise<void> {
   }
 
   const jsonPath = values.json ?? (values.board ? "debug-report.json" : undefined);
+  const metrics = parseProductionMetrics(values.metrics);
   const bug = {
     repoPath: values.repo ?? process.cwd(),
     message: values.error,
@@ -148,6 +159,7 @@ async function main(argv: string[]): Promise<void> {
     affectedUsers: values["affected-users"] ? Number.parseInt(values["affected-users"], 10) : undefined,
     firstSeen: values["first-seen"],
     incidentSource: source,
+    metrics,
   };
   const pipeline = {
     repoPath: values.repo ?? process.cwd(),
@@ -190,6 +202,9 @@ async function main(argv: string[]): Promise<void> {
   }
   if (report.blastRadius) {
     process.stderr.write(`\n${renderBlastRadiusAscii(report.blastRadius)}\n`);
+  }
+  if (report.productionInvestigation || positionals[0] === "incident") {
+    process.stderr.write(`\n${renderProductionInvestigatorAscii(report.productionInvestigation)}\n`);
   }
   if (report.production) {
     process.stderr.write(`\n${renderProductionIncidentAscii(report.production)}\n`);
