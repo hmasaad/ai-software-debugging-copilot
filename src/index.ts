@@ -1,6 +1,7 @@
 export { debugBug } from "./pipeline.js";
 export { debugAutonomously } from "./autonomous/debug.js";
 export { collectEvidence, parseErrorText } from "./collectors/index.js";
+export { analyzeEnvironment, collectRuntime, renderEnvironmentAscii } from "./collectors/runtime.js";
 export {
   LogAnalyzerAgent,
   ClassifierAgent,
@@ -32,6 +33,8 @@ export {
   TEST_AGENT,
   VALIDATION_AGENT,
   INCIDENT_AGENT,
+  runRoutedSpecialists,
+  renderSpecialistsAscii,
 } from "./agents/index.js";
 export { renderMarkdownReport } from "./report/markdown.js";
 export { renderDebugResult } from "./report/result.js";
@@ -47,6 +50,11 @@ export {
 } from "./analysis/git-regression.js";
 export { classifyFailure, renderClassificationAscii } from "./analysis/classify.js";
 export { buildBlastRadius, renderBlastRadiusAscii } from "./analysis/blast-radius.js";
+export {
+  buildProductionIncident,
+  parseProductionSignals,
+  renderProductionIncidentAscii,
+} from "./analysis/production.js";
 export { runEvalSuite, renderEvalDashboard } from "./evals/run.js";
 export type {
   BugInput,
@@ -80,4 +88,7 @@ export type {
   AutonomousDebugResult,
   SandboxSession,
   SandboxAction,
+  FlutterAnalysis,
+  FlutterDomain,
+  SpecialistFindings,
 } from "./types.js";

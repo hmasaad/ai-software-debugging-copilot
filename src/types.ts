@@ -524,6 +524,9 @@ export type CauseKind =
   | "introducing-commit"
   | "dependency"
   | "environment"
+  | "api"
+  | "database"
+  | "flutter"
   | "unreproducible"
   | "untested";
 
@@ -583,7 +586,13 @@ export interface EvidenceGraph {
   summary: string;
 }
 
-export type FixStrategy = "optional-chain" | "nullish-default" | "investigator" | "dependency-install" | "none";
+export type FixStrategy =
+  | "optional-chain"
+  | "nullish-default"
+  | "investigator"
+  | "dependency-install"
+  | "environment-align"
+  | "none";
 
 /** Output of the Fix Agent: a minimal code fix. */
 export interface FixAnalysis {
@@ -668,7 +677,8 @@ export type FailureCategory =
   | "performance-issue"
   | "concurrency-race"
   | "configuration-environment"
-  | "security-issue";
+  | "security-issue"
+  | "logic-error";
 
 export interface FailureClassification {
   family: FailureFamily;
@@ -689,6 +699,8 @@ export interface EnvironmentMismatch {
 export interface EnvironmentAnalysis {
   local: RuntimeContext;
   baseline?: RuntimeContext;
+  localLabel: string;
+  baselineLabel?: string;
   mismatches: EnvironmentMismatch[];
   summary: string;
 }
@@ -716,12 +728,29 @@ export interface DatabaseAnalysis {
   handoff: string[];
 }
 
+export type FlutterDomain =
+  | "bloc"
+  | "dio"
+  | "drift"
+  | "di"
+  | "lifecycle"
+  | "widget"
+  | "async"
+  | "platform-channel"
+  | "ios-build"
+  | "android-build";
+
 export interface FlutterAnalysis {
   usesBloc: boolean;
   usesDio: boolean;
   usesDrift: boolean;
   usesDi: boolean;
   usesPlatformChannels: boolean;
+  usesLifecycle: boolean;
+  usesAsync: boolean;
+  iosBuild: boolean;
+  androidBuild: boolean;
+  implicated: FlutterDomain[];
   widgets: string[];
   blocs: string[];
   summary: string;
@@ -733,12 +762,14 @@ export interface SpecialistFindings {
   network?: NetworkAnalysis;
   database?: DatabaseAnalysis;
   flutter?: FlutterAnalysis;
+  dependency?: DependencyAnalysis;
 }
 
 export interface BlastRadiusNode {
   name: string;
   kind: "symbol" | "file" | "bloc" | "screen";
   impact: "high" | "low";
+  surface: string;
 }
 
 export interface BlastRadiusAnalysis {
@@ -746,6 +777,7 @@ export interface BlastRadiusAnalysis {
   usedBy: BlastRadiusNode[];
   high: string[];
   low: string[];
+  question: string;
   summary: string;
 }
 
@@ -778,7 +810,9 @@ export interface ProductionIncident {
   affectedUsers?: number;
   firstSeen?: string;
   groupedCount?: number;
+  fingerprint?: string;
   likelyCause: string;
+  suggestedFix?: string;
   confidence: number;
   recommendedAction: "rollback" | "hotfix" | "investigate";
   summary: string;

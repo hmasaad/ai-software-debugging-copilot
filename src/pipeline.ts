@@ -4,7 +4,7 @@ import { applyEdits, restoreFiles, snapshotFiles } from "./analysis/patch.js";
 import { attemptOutcome, attemptSummary } from "./analysis/attempts.js";
 import { buildBlastRadius } from "./analysis/blast-radius.js";
 import { recallIncidents, rememberIncident } from "./analysis/memory.js";
-import { buildProductionIncident } from "./analysis/production.js";
+import { mergeProductionInput } from "./analysis/production.js";
 import { createInvestigator } from "./llm/index.js";
 import { LogAnalyzerAgent } from "./agents/log-analyzer.js";
 import { ClassifierAgent } from "./agents/classifier-agent.js";
@@ -119,6 +119,8 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   evidence.codeInvestigation = codeInvestigation;
   evidence.gitInvestigation = gitInvestigation;
   evidence.dependencyAnalysis = dependencyAnalysis;
+  const findings = { ...specialists, dependency: dependencyAnalysis };
+  evidence.specialists = findings;
 
   emit({
     stage: "memory",
@@ -167,7 +169,8 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     evidence,
     reproduction: reproductionAnalysis,
     classification,
-    specialists,
+    specialists: findings,
+    environment,
   });
   agentRuns.push(causeRun);
   evidence.causeAnalysis = causeAnalysis;
@@ -213,6 +216,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
       investigator,
       previousFailure: lastFailure,
       classification,
+      environment,
     });
     agentRuns.push(fixRun);
 
@@ -338,18 +342,20 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   });
   evidence.memory = memory;
 
-  const production = buildProductionIncident({
-    bug,
-    rootCause: last.rootCause,
-    gitInvestigation,
-    groupedCount: memory.matches.length || undefined,
-    confidence: causeAnalysis.confidence,
-  });
+  const productionHint = mergeProductionInput(bug);
+  const productionMode = Boolean(
+    productionHint.version ||
+      productionHint.affectedUsers != null ||
+      productionHint.firstSeen ||
+      productionHint.incidentSource,
+  );
 
   emit({
     stage: "incident-agent",
     agent: "Incident Agent",
-    message: production ? "Production incident mode: group crashes, version, first occurrence..." : "Produce an engineer-friendly incident report...",
+    message: productionMode
+      ? "Production incident mode: group similar crashes, version, first occurrence, git regression..."
+      : "Produce an engineer-friendly incident report...",
   });
   const { result: incidentReport, run: incidentRun } = await new IncidentAgent().run({
     input: bug,
@@ -364,8 +370,9 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     fixAnalysis: lastFixAnalysis,
     testAnalysis: lastTestAnalysis,
     validationAnalysis: lastValidationAnalysis,
+    memory,
   });
-  if (production) incidentReport.production = production;
+  const production = incidentReport.production;
   agentRuns.push(incidentRun);
   evidence.incidentReport = incidentReport;
 
@@ -410,7 +417,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     incidentReport,
     classification,
     environment,
-    specialists,
+    specialists: findings,
     blastRadius,
     memory,
     production,

@@ -3,6 +3,7 @@ import { parsePrNumber } from "./git-regression.js";
 import type {
   CodeInvestigation,
   DependencyAnalysis,
+  EnvironmentAnalysis,
   EvidenceCheck,
   EvidenceGraph,
   EvidenceGraphNode,
@@ -20,6 +21,7 @@ export function buildEvidenceGraph(input: {
   gitInvestigation?: GitInvestigation;
   dependencyAnalysis?: DependencyAnalysis;
   reproduction?: ReproductionAnalysis;
+  environment?: EnvironmentAnalysis;
   leading?: RankedCause;
   confidence: number;
 }): EvidenceGraph {
@@ -101,7 +103,7 @@ export function buildEvidenceGraph(input: {
     add(nodes, seen, {
       id: "environment",
       kind: "environment",
-      label: "Environment",
+      label: input.environment?.mismatches.length ? "Toolchain mismatch" : "Environment",
       detail: input.leading.description,
     });
   }
@@ -168,7 +170,7 @@ function evidenceChecks(
   const matched = input.reproduction?.match === "matched";
   const commit = Boolean(input.gitInvestigation?.introducing);
 
-  return [
+  const checks: EvidenceCheck[] = [
     {
       id: "stack-trace",
       label: "Stack trace",
@@ -215,6 +217,18 @@ function evidenceChecks(
       detail: input.reproduction?.matchDetail ?? input.reproduction?.result.summary ?? "Reproduction did not run.",
     },
   ];
+  if (input.environment) {
+    checks.push({
+      id: "toolchain",
+      label: "Toolchain mismatch",
+      present: input.environment.mismatches.length > 0,
+      supports: input.environment.mismatches.length > 0,
+      detail: input.environment.mismatches.length
+        ? input.environment.mismatches.map((item) => `${item.tool}: ${item.expected} vs ${item.actual}`).join("; ")
+        : "No toolchain mismatch detected.",
+    });
+  }
+  return checks;
 }
 
 function contradictingChecks(input: Parameters<typeof buildEvidenceGraph>[0]): EvidenceCheck[] {
@@ -266,6 +280,9 @@ function contradictingChecks(input: Parameters<typeof buildEvidenceGraph>[0]): E
 
 function claimFor(leading: RankedCause | undefined, api: boolean, nullish: boolean): string {
   if (leading?.kind === "dependency") return shortClaim(leading.description, "Dependency/version failure");
+  if (leading?.kind === "flutter") return shortClaim(leading.description, "Flutter framework failure");
+  if (leading?.kind === "api") return shortClaim(leading.description, "API/backend failure");
+  if (leading?.kind === "database") return shortClaim(leading.description, "Database failure");
   if (leading?.kind === "environment") return shortClaim(leading.description, "Environment failure");
   if (leading?.kind === "unreproducible") return "Could not reproduce locally";
   if (api && nullish) return "Null API response";

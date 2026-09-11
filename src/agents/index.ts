@@ -13,7 +13,7 @@ export { FixAgent } from "./fix-agent.js";
 export { TestAgent } from "./test-agent.js";
 export { ValidationAgent } from "./validation-agent.js";
 export { IncidentAgent } from "./incident-agent.js";
-export { runRoutedSpecialists } from "./specialists.js";
+export { runRoutedSpecialists, renderSpecialistsAscii } from "./specialists.js";
 export {
   LOG_ANALYZER,
   CLASSIFIER,

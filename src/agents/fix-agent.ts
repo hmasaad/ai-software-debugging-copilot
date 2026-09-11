@@ -44,6 +44,14 @@ export class FixAgent implements SpecialistAgent<FixAnalysis> {
     if (ctx.causeAnalysis?.leading?.kind === "dependency" || ctx.dependencyAnalysis?.likelyDependencyBug) {
       return emptyFix("dependency-install", "heuristic", ctx, "No application patch: treat this as an install/version issue first.");
     }
+    if (ctx.causeAnalysis?.leading?.kind === "environment" && ctx.environment?.mismatches.length) {
+      return emptyFix(
+        "environment-align",
+        "heuristic",
+        ctx,
+        "No application patch: align Flutter/Xcode/Gradle with the working machine first.",
+      );
+    }
 
     const investigator = ctx.investigator ?? new HeuristicInvestigator();
     const rca = ctx.rootCause ?? fallbackRca(ctx);
@@ -172,7 +180,7 @@ function pickExisting(content: string, expression: string): string | undefined {
 }
 
 function buildFixSummary(proposal: FixProposal, strategy: FixStrategy, source: FixAnalysis["source"]): string {
-  if (strategy === "dependency-install") return proposal.summary;
+  if (strategy === "dependency-install" || strategy === "environment-align") return proposal.summary;
   if (!proposal.edits.length) {
     return proposal.summary || "No minimal edit generated; wait for an LLM investigator or a clearer crash expression.";
   }
@@ -185,6 +193,10 @@ function buildFixHandoff(proposal: FixProposal, strategy: FixStrategy, leading?:
   const notes: string[] = [];
   if (strategy === "dependency-install") {
     notes.push("Do not patch application code until the dependency/version hypothesis is ruled out.");
+    return notes;
+  }
+  if (strategy === "environment-align") {
+    notes.push("Do not patch application code until the toolchain mismatch is ruled out.");
     return notes;
   }
   if (proposal.edits[0]) {
@@ -214,7 +226,12 @@ function emptyFix(
       rationale: ctx.rootCause?.rootCause ?? ctx.causeAnalysis?.summary ?? summary,
       edits: [],
       testPlan: ctx.reproduction?.steps ?? [],
-      risks: strategy === "dependency-install" ? ["Installing or pinning the wrong version."] : [],
+      risks:
+        strategy === "dependency-install"
+          ? ["Installing or pinning the wrong version."]
+          : strategy === "environment-align"
+            ? ["The failure may still be application code after toolchains match."]
+            : [],
       applied: false,
       applyErrors: [],
     },

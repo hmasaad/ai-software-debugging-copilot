@@ -1,5 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { renderEnvironmentAscii } from "../collectors/runtime.js";
+import { renderProductionIncidentAscii } from "../analysis/production.js";
+import { renderBlastRadiusAscii } from "../analysis/blast-radius.js";
 import type { DebuggingReport } from "../types.js";
 
 export function renderMarkdownReport(report: DebuggingReport): string {
@@ -64,30 +67,49 @@ export function renderMarkdownReport(report: DebuggingReport): string {
       ? `## Failure classification\n\n**${report.classification.summary}** (${pct(report.classification.confidence)})\nRouted: ${report.classification.routedAgents.join(", ") || "core agents"}`
       : "",
     "",
+    report.specialists
+      ? [
+          "## Specialized agents",
+          "",
+          "Debugging Orchestrator → Crash · Network · DB · Flutter · Dependency → Root Cause Agent",
+          report.specialists.crash ? `\n**Crash Agent:** ${report.specialists.crash.summary}` : "",
+          report.specialists.network ? `\n**Network Agent:** ${report.specialists.network.summary}` : "",
+          report.specialists.database ? `\n**Database Agent:** ${report.specialists.database.summary}` : "",
+          report.specialists.flutter
+            ? `\n**Flutter Debugging Agent:** ${report.specialists.flutter.summary}${
+                report.specialists.flutter.handoff.length
+                  ? `\n${report.specialists.flutter.handoff.map((note) => `- ${note}`).join("\n")}`
+                  : ""
+              }`
+            : "",
+          report.specialists.dependency ? `\n**Dependency Analyst:** ${report.specialists.dependency.summary}` : "",
+        ].join("\n")
+      : "",
+    "",
     report.iterations.length
       ? `## Patch → test → verify\n\n${report.iterations.map((it) => `- ${it.summary}`).join("\n")}`
       : "",
     "",
     report.environment
-      ? `## Environment\n\n${report.environment.summary}${
-          report.environment.mismatches.length
-            ? `\n\n${report.environment.mismatches.map((item) => `- ${item.tool}: ${item.expected} vs ${item.actual}`).join("\n")}`
-            : ""
+      ? `## Environment\n\n${renderEnvironmentAscii(report.environment)}${
+          report.environment.mismatches.length ? `\n\n${report.environment.summary}` : ""
         }`
       : "",
     "",
     report.blastRadius
-      ? `## Blast radius\n\n${report.blastRadius.summary}${
-          report.blastRadius.usedBy.length
-            ? `\n\nUsed by:\n${report.blastRadius.usedBy.map((node) => `- ${node.impact.toUpperCase()} ${node.name}`).join("\n")}`
-            : ""
-        }`
+      ? `## Blast radius\n\n${renderBlastRadiusAscii(report.blastRadius)}`
       : "",
     "",
     report.memory ? `## Debugging memory\n\n${report.memory.summary}` : "",
     "",
     report.production
-      ? `## Production incident\n\n- Version: ${report.production.version ?? "unknown"}\n- Affected users: ${report.production.affectedUsers ?? "unknown"}\n- First seen: ${report.production.firstSeen ?? "unknown"}\n- Likely cause: ${report.production.likelyCause}\n- Recommended action: ${report.production.recommendedAction}\n- Confidence: ${pct(report.production.confidence)}`
+      ? `## Production incident\n\n${renderProductionIncidentAscii(report.production)}${
+          report.production.suggestedFix ? `\n\nSuggested fix: ${report.production.suggestedFix}` : ""
+        }${
+          report.production.groupedCount
+            ? `\n\nGrouped ${report.production.groupedCount} similar crash${report.production.groupedCount === 1 ? "" : "es"}.`
+            : ""
+        }`
       : "",
     "",
     report.agentRuns.length

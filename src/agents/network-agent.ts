@@ -26,7 +26,13 @@ export class NetworkAgent implements SpecialistAgent<NetworkAnalysis> {
     const blob = `${log?.error.message ?? ""} ${log?.logs.excerpt ?? ""} ${extra ?? ""}`;
     const status = blob.match(/\b(status(?: code)?|HTTP)\s*[:=]?\s*(\d{3})\b/i)?.[2];
     const endpoint = blob.match(/https?:\/\/[^\s)'"]+/)?.[0];
-    const protocol = /\bdio\b/i.test(blob) ? "dio" : /socketexception|econnrefused/i.test(blob) ? "tcp" : endpoint ? "http" : undefined;
+    const protocol = /dioexception|\bdio\b/i.test(blob)
+      ? "dio"
+      : /socketexception|econnrefused/i.test(blob)
+        ? "tcp"
+        : endpoint
+          ? "http"
+          : undefined;
     return {
       protocol,
       status,

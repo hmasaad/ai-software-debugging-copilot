@@ -59,6 +59,38 @@ export function buildEvidenceBrief(
         ? `${evidence.classification.summary} (${Math.round(evidence.classification.confidence * 100)}%) route=${evidence.classification.routedAgents.join(",")}`
         : "",
       "",
+      `## Specialized agents`,
+      evidence.specialists?.crash?.summary ?? "",
+      evidence.specialists?.network?.summary ?? "",
+      evidence.specialists?.database?.summary ?? "",
+      evidence.specialists?.flutter?.summary ?? "",
+      evidence.specialists?.flutter?.handoff.length
+        ? `Flutter handoff:\n${evidence.specialists.flutter.handoff.map((note) => `- ${note}`).join("\n")}`
+        : "",
+      evidence.specialists?.dependency?.summary ?? "",
+      "",
+      `## Environment`,
+      evidence.environment
+        ? [
+            evidence.environment.summary,
+            evidence.environment.localLabel
+              ? `${evidence.environment.localLabel}: Flutter ${evidence.environment.local.flutter ?? "—"} · Dart ${evidence.environment.local.dart ?? "—"} · Xcode ${evidence.environment.local.xcode ?? "—"} · Gradle ${evidence.environment.local.gradle ?? "—"} · Kotlin ${evidence.environment.local.kotlin ?? "—"} · OS ${evidence.environment.local.os} · Device ${evidence.environment.local.device ?? "—"} · Flavor ${evidence.environment.local.flavor ?? "—"} · ${evidence.environment.local.gitBranch ?? "branch?"} @ ${evidence.environment.local.gitSha ?? "sha?"}`
+              : "",
+            evidence.environment.baseline
+              ? `${evidence.environment.baselineLabel ?? "Developer B"}: Flutter ${evidence.environment.baseline.flutter ?? "—"} · Xcode ${evidence.environment.baseline.xcode ?? "—"}`
+              : "",
+            evidence.environment.mismatches.length
+              ? `Mismatches:\n${evidence.environment.mismatches.map((item) => `- ${item.tool}: ${item.expected} vs ${item.actual}`).join("\n")}`
+              : "",
+            evidence.environment.local.envHints.length ? `Env: ${evidence.environment.local.envHints.join(", ")}` : "",
+            evidence.environment.local.dependencies?.length
+              ? `Dependencies: ${evidence.environment.local.dependencies.map((dep) => `${dep.name}@${dep.version}`).join(", ")}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : "",
+      "",
       `## Code Investigator`,
       evidence.codeInvestigation?.summary ?? "",
       evidence.codeInvestigation?.trace.length
@@ -163,6 +195,21 @@ export function buildEvidenceBrief(
         ? `Handoff:\n${evidence.causeAnalysis.handoff.map((h) => `- ${h}`).join("\n")}`
         : "",
       "",
+      `## Blast radius`,
+      evidence.blastRadius
+        ? [
+            evidence.blastRadius.question,
+            `Origin: ${evidence.blastRadius.origin}`,
+            evidence.blastRadius.usedBy.length
+              ? `Used by:\n${evidence.blastRadius.usedBy.map((node) => `- ${node.name}`).join("\n")}`
+              : "",
+            evidence.blastRadius.high.length ? `HIGH:\n${evidence.blastRadius.high.map((name) => `- ${name}`).join("\n")}` : "",
+            evidence.blastRadius.low.length ? `LOW:\n${evidence.blastRadius.low.map((name) => `- ${name}`).join("\n")}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : "",
+      "",
       `## Fix Agent`,
       evidence.fixAnalysis?.summary ?? "",
       evidence.fixAnalysis ? `Strategy: ${evidence.fixAnalysis.strategy} (${evidence.fixAnalysis.source})` : "",
@@ -197,6 +244,22 @@ export function buildEvidenceBrief(
       evidence.incidentReport?.summary ?? "",
       evidence.incidentReport
         ? `${evidence.incidentReport.severity} ${evidence.incidentReport.status}: ${evidence.incidentReport.whatHappened}`
+        : "",
+      evidence.incidentReport?.production
+        ? [
+            "Production crash:",
+            `Source: ${evidence.incidentReport.production.source ?? "local"}`,
+            `Version: ${evidence.incidentReport.production.version ?? "unknown"}`,
+            `Affected users: ${evidence.incidentReport.production.affectedUsers ?? "unknown"}`,
+            `First seen: ${evidence.incidentReport.production.firstSeen ?? "unknown"}`,
+            `Likely cause: ${evidence.incidentReport.production.likelyCause}`,
+            `Recommended action: ${evidence.incidentReport.production.recommendedAction}`,
+            evidence.incidentReport.production.suggestedFix
+              ? `Suggested fix: ${evidence.incidentReport.production.suggestedFix}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
         : "",
       "",
       `## Bug`,

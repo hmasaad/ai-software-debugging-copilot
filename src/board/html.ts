@@ -415,27 +415,55 @@ function classificationCard(classification: FailureClassification): string {
 }
 
 function environmentCard(analysis: EnvironmentAnalysis): string {
+  const local = snapshotHtml(analysis.localLabel, analysis.local);
+  const baseline = analysis.baseline
+    ? snapshotHtml(analysis.baselineLabel ?? "Developer B", analysis.baseline)
+    : "";
   const mismatches = analysis.mismatches
     .map((item) => `<li>${esc(item.tool)}: ${esc(item.expected)} vs ${esc(item.actual)}</li>`)
     .join("");
   return `<div class="card ${analysis.mismatches.length ? "tint-warn" : ""}">
     <h3>Environment</h3>
     <p class="lead">${esc(analysis.summary)}</p>
+    <div class="split">${local}${baseline}</div>
     ${mismatches ? `<ul>${mismatches}</ul>` : ""}
-    <p class="meta">${esc(
-      [analysis.local.os, analysis.local.flutter && `Flutter ${analysis.local.flutter}`, analysis.local.xcode && `Xcode ${analysis.local.xcode}`, analysis.local.gitBranch]
-        .filter(Boolean)
-        .join(" · "),
-    )}</p>
   </div>`;
 }
 
+function snapshotHtml(label: string, runtime: EnvironmentAnalysis["local"]): string {
+  const rows = [
+    runtime.flutter && `Flutter ${runtime.flutter}`,
+    runtime.dart && `Dart ${runtime.dart}`,
+    runtime.xcode && `Xcode ${runtime.xcode}`,
+    runtime.gradle && `Gradle ${runtime.gradle}`,
+    runtime.kotlin && `Kotlin ${runtime.kotlin}`,
+    runtime.os && `OS ${runtime.os}`,
+    runtime.device && `Device ${runtime.device}`,
+    runtime.flavor && `Flavor ${runtime.flavor}`,
+    ...runtime.envHints,
+    ...(runtime.dependencies ?? []).map((dep) => `${dep.name} ${dep.version}`),
+    runtime.gitBranch && `Git branch ${runtime.gitBranch}`,
+    runtime.gitSha && `Commit SHA ${runtime.gitSha}`,
+  ].filter((item): item is string => Boolean(item));
+  return `<div><p class="meta">${esc(label)}</p><ul>${rows.map((row) => `<li>${esc(row)}</li>`).join("")}</ul></div>`;
+}
+
 function blastRadiusCard(analysis: BlastRadiusAnalysis): string {
-  const used = analysis.usedBy.map((node) => `<li>${esc(node.impact.toUpperCase())} ${esc(node.name)}</li>`).join("");
+  const used = analysis.usedBy
+    .filter((node) => node.kind === "bloc" || node.kind === "symbol")
+    .map((node) => `<li>${esc(node.name)}</li>`)
+    .join("");
+  const high = analysis.high.map((name) => `<li>${esc(name)}</li>`).join("");
+  const low = analysis.low.map((name) => `<li>${esc(name)}</li>`).join("");
   return `<div class="card">
     <h3>Blast radius</h3>
-    <p class="lead">${esc(analysis.summary)}</p>
-    ${used ? `<ul>${used}</ul>` : ""}
+    <p class="meta">${esc(analysis.question)}</p>
+    <p class="lead">${esc(analysis.origin)}</p>
+    ${used ? `<p class="meta">Used by</p><ul>${used}</ul>` : ""}
+    <p class="meta">HIGH</p>
+    ${high ? `<ul>${high}</ul>` : "<p class=\"meta\">none</p>"}
+    <p class="meta">LOW</p>
+    ${low ? `<ul>${low}</ul>` : "<p class=\"meta\">none</p>"}
   </div>`;
 }
 
@@ -451,27 +479,52 @@ function memoryCard(memory: DebuggingMemory): string {
 }
 
 function productionCard(incident: ProductionIncident): string {
+  const action =
+    incident.recommendedAction === "rollback"
+      ? "Rollback / hotfix"
+      : incident.recommendedAction === "hotfix"
+        ? "Hotfix"
+        : "Investigate";
   return `<section class="incident" aria-label="Production crash">
     <div class="card tint-bad">
       <h3>Production crash</h3>
-      <p class="meta">Version ${esc(incident.version ?? "unknown")} · ${incident.affectedUsers ?? "?"} users · first seen ${esc(incident.firstSeen ?? "unknown")}</p>
+      <p class="meta">Version ${esc(incident.version ?? "unknown")} · ${incident.affectedUsers ?? "?"} users · first seen ${esc(incident.firstSeen ?? "unknown")}${incident.source ? ` · ${esc(incident.source)}` : ""}</p>
       <p class="lead">${esc(incident.likelyCause)}</p>
-      <p class="meta">Confidence ${Math.round(incident.confidence * 100)}% · ${esc(incident.recommendedAction)}</p>
+      <p class="meta">Confidence ${Math.round(incident.confidence * 100)}% · ${esc(action)}</p>
+      ${incident.suggestedFix ? `<p class="meta">Suggested fix: ${esc(incident.suggestedFix)}</p>` : ""}
+      ${incident.groupedCount ? `<p class="meta">${incident.groupedCount} similar crash${incident.groupedCount === 1 ? "" : "es"} grouped</p>` : ""}
     </div>
   </section>`;
 }
 
 function specialistsCard(findings: SpecialistFindings): string {
   const items = [
-    findings.crash?.summary,
-    findings.network?.summary,
-    findings.database?.summary,
-    findings.flutter?.summary,
+    findings.crash && `Crash — ${findings.crash.summary}`,
+    findings.network && `Network — ${findings.network.summary}`,
+    findings.database && `Database — ${findings.database.summary}`,
+    findings.flutter && `Flutter — ${findings.flutter.summary}`,
+    findings.dependency && `Dependency — ${findings.dependency.summary}`,
   ].filter((item): item is string => Boolean(item));
   if (!items.length) return "";
+  const flutter = findings.flutter;
+  const domains = flutter
+    ? [
+        flutter.usesBloc && "Bloc",
+        flutter.usesDio && "Dio",
+        flutter.usesDrift && "Drift",
+        flutter.usesDi && "DI",
+        flutter.usesLifecycle && "lifecycle",
+        flutter.usesAsync && "async",
+        flutter.usesPlatformChannels && "platform channels",
+        flutter.iosBuild && "iOS",
+        flutter.androidBuild && "Android",
+      ].filter((item): item is string => Boolean(item))
+    : [];
   return `<div class="card">
     <h3>Specialized agents</h3>
+    <p class="meta">Crash · Network · DB · Flutter · Dependency → Root Cause</p>
     <ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>
+    ${domains.length ? `<p class="meta">Flutter understands ${esc(domains.join(", "))}</p>` : ""}
   </div>`;
 }
 
@@ -909,6 +962,7 @@ const BOARD_CSS = `
   .card.tint-bad { border-color: var(--bad); }
   .card.tint-ok { border-color: var(--ok); }
   .card.tint-warn { border-color: var(--warn); }
+  .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 8px 0; }
   .code, .diff {
     margin: 0;
     overflow: auto;

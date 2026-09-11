@@ -89,7 +89,7 @@ export const DATABASE_AGENT = {
 export const FLUTTER_AGENT = {
   id: "flutter-agent" as const satisfies AgentId,
   name: "Flutter Debugging Agent",
-  responsibility: "Understand Bloc, Dio, Drift, DI, lifecycle, widgets, and platform builds",
+  responsibility: "Understand Bloc, Dio, Drift, DI, lifecycle, widgets, async, platform channels, and iOS/Android builds",
 };
 
 export const CODE_INVESTIGATOR = {
@@ -143,7 +143,7 @@ export const VALIDATION_AGENT = {
 export const INCIDENT_AGENT = {
   id: "incident-agent" as const satisfies AgentId,
   name: "Incident Agent",
-  responsibility: "Produce an engineer-friendly incident report",
+  responsibility: "Triage production crashes and write an engineer-friendly incident report",
 };
 
 export type {

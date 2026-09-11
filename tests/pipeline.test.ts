@@ -136,6 +136,7 @@ describe("debugBug pipeline", () => {
     expect(markdown).toContain("Test Agent");
     expect(markdown).toContain("Validation Agent");
     expect(markdown).toContain("Incident Agent");
+    expect(markdown).toContain("Specialized agents");
     expect(markdown).toContain("Failure classification");
     expect(markdown).toContain("Patch → test → verify");
     expect(markdown).toContain("Proposed fix");

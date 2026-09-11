@@ -16,6 +16,9 @@ export function renderDebugResult(report: DebuggingReport): string {
     `Severity: ${severity}`,
     `Confidence: ${confidence}%`,
     "",
+    ...(report.classification
+      ? ["Class:", ...wrap(report.classification.summary), ""]
+      : []),
     "Root Cause:",
     ...wrap(graph?.claim || report.rootCause.rootCause || report.causeAnalysis.summary),
     "",

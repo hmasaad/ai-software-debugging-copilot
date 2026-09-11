@@ -45,7 +45,21 @@ Without an LLM key it still collects evidence and produces a heuristic report. W
 
 ## Core agents
 
-The copilot is an **orchestrator**, not one giant debugging prompt. Specialists run in sequence and hand off structured findings.
+The copilot is an **orchestrator**, not one giant debugging prompt. Classification routes Crash, Network, Database, Flutter, and Dependency specialists; their findings feed Root Cause Agent.
+
+```
+                 Debugging Orchestrator
+                          │
+       ┌──────────┬───────┼────────┬──────────┐
+       ↓          ↓       ↓        ↓          ↓
+    Crash      Network   DB      Flutter   Dependency
+       │          │       │        │          │
+       └──────────┴───────┼────────┴──────────┘
+                          ↓
+                    Root Cause Agent
+```
+
+Specialists run in parallel where possible and hand off structured findings.
 
 | Agent | Responsibility |
 |---|---|
@@ -54,7 +68,7 @@ The copilot is an **orchestrator**, not one giant debugging prompt. Specialists 
 | **Crash Agent** | Specialize in runtime crashes, null derefs, and ANRs |
 | **Network Agent** | Specialize in API, HTTP, and backend failures |
 | **Database Agent** | Specialize in database and persistence failures |
-| **Flutter Debugging Agent** | Understand Bloc, Dio, Drift, DI, lifecycle, widgets, and platform builds |
+| **Flutter Debugging Agent** | Understand Bloc, Dio, Drift, DI, lifecycle, widgets, async, platform channels, and iOS/Android builds |
 | **Code Investigator** | Trace the error through the codebase |
 | **Git Investigator** | Find when the bug appeared (git regression) |
 | **Dependency Analyst** | Detect dependency/version-related issues |
@@ -114,13 +128,87 @@ Validation Agent judges whether the original issue is actually gone: patch appli
 
 Incident Agent writes a SEV-style report (what happened, impact, root cause, fix, validation, timeline, follow-ups) that an engineer can paste into Slack or a postmortem.
 
-Before investigation, **Failure Classifier** labels the problem (runtime crash, build failure, dependency, API, database, UI, state, performance, race, environment, security) and routes Crash / Network / Database / Flutter specialists. The Flutter agent looks for Bloc, Dio, Drift, DI, widget trees, async gaps, platform channels, and iOS/Android build markers.
+Before investigation, **Failure Classifier** splits the problem into Runtime / Build / Logic, then names a subtype (Null Crash, Gradle, Wrong state, …) and a routing category (runtime crash, build failure, dependency, API, database, UI, state, performance, race, environment, security). That routing starts Crash, Network, Database, Flutter, and Dependency specialists. Their findings feed **Root Cause Agent**.
 
-**Environment-aware debugging** captures Flutter/Dart/Xcode/Gradle/Kotlin, OS, device, flavor, git branch/SHA, and env vars. Pass `--baseline-env` or mention versions in `--context` (`Flutter 3.27` / `Xcode 15.1`) to detect “works on my machine” mismatches.
+The **Flutter Debugging Agent** inspects Bloc/Cubit, Dio, Drift, DI (get_it/injectable/riverpod), widget lifecycle, the widget tree, async gaps, platform channels, and iOS/Android build trees (`ios/`, `android/`).
 
-**Production incident mode** (`--version`, `--affected-users`, `--first-seen`, `--source crashlytics|sentry|logs`) groups similar crashes from debugging memory, ties in git regression, and recommends rollback vs hotfix.
+**Environment-aware debugging** captures the local toolchain so “it works on my machine” becomes a ranked cause, especially for build and dependency failures:
 
-**Blast-radius analysis** asks what else the change could break (callers/blocs/screens ranked HIGH vs LOW).
+```
+Developer A
+Flutter 3.44
+Xcode 16.2
+
+Developer B
+Flutter 3.27
+Xcode 15.1
+
+Potential environment mismatch detected.
+```
+
+It also records Dart, Gradle, Kotlin, OS, device, build flavor, environment variables, pinned dependencies, git branch, and commit SHA. Pass `--baseline-env` or describe the other machine in `--context`.
+
+**Production incident mode** connects Crashlytics / Sentry / logs to the same investigation:
+
+```
+Crashlytics / Sentry / Logs
+             ↓
+       Incident Agent
+             ↓
+     Group similar crashes
+             ↓
+       Find affected version
+             ↓
+       Find first occurrence
+             ↓
+       Git regression
+             ↓
+       Root cause
+             ↓
+       Suggested fix
+```
+
+Pass `--source crashlytics|sentry|logs`, `--version`, `--affected-users`, and `--first-seen` (or put those fields in `--context`). Incident Agent groups similar crashes from debugging memory, ties the blast to a git introducing commit, and recommends rollback vs hotfix:
+
+```
+Production Crash
+
+Version: 1.0.181
+Affected users: 327
+First seen: 14:32 UTC
+
+Likely cause:
+Recent Firebase initialization change
+
+Confidence: 91%
+
+Recommended action:
+Rollback / hotfix
+```
+
+**Blast-radius analysis** asks **what else could this change break?** After the crash origin is known, it lists consumers (blocs, screens) and ranks product surfaces HIGH vs LOW:
+
+```
+Bug
+ ↓
+SavingsRepository
+ ↓
+Used by
+ ├── SavingsBloc
+ ├── SavingsDetailsBloc
+ ├── ReportsBloc
+ └── ShareoutBloc
+
+Potential blast radius:
+
+HIGH
+├── Savings screen
+├── Savings reports
+└── Shareout calculation
+
+LOW
+└── Media screen
+```
 
 **Debugging memory** stores resolved incidents in `.debug-copilot/memory.json` and, on the next similar error, reports how many previous incidents matched the same pattern.
 

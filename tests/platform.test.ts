@@ -101,8 +101,9 @@ describe("blast radius", () => {
       },
     });
     expect(analysis.origin).toBe("SavingsRepository");
-    expect(analysis.high).toEqual(expect.arrayContaining(["SavingsBloc", "ReportsBloc"]));
-    expect(analysis.low).toContain("MediaScreen");
+    expect(analysis.high).toEqual(expect.arrayContaining(["Savings screen", "Savings reports"]));
+    expect(analysis.low).toContain("Media screen");
+    expect(renderBlastRadiusAscii(analysis)).toContain("What else could this change break?");
     expect(renderBlastRadiusAscii(analysis)).toContain("Potential blast radius:");
   });
 });
@@ -179,9 +180,12 @@ describe("production incident", () => {
       },
     });
     expect(incident?.recommendedAction).toBe("rollback");
+    expect(Math.round((incident?.confidence ?? 0) * 100)).toBe(91);
     expect(renderProductionIncidentAscii(incident!)).toContain("Version: 1.0.181");
     expect(renderProductionIncidentAscii(incident!)).toContain("Affected users: 327");
     expect(renderProductionIncidentAscii(incident!)).toContain("Firebase initialization");
+    expect(renderProductionIncidentAscii(incident!)).toContain("Confidence: 91%");
+    expect(renderProductionIncidentAscii(incident!)).toContain("Rollback / hotfix");
   });
 });
 

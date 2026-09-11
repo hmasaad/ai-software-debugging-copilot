@@ -14,6 +14,7 @@ import { renderEnvironmentAscii } from "./collectors/runtime.js";
 import { renderProductionIncidentAscii } from "./analysis/production.js";
 import { renderMemoryAscii } from "./analysis/memory.js";
 import { runEvalSuite } from "./evals/run.js";
+import { renderSpecialistsAscii } from "./agents/specialists.js";
 import { serveInvestigationBoard } from "./board/serve.js";
 import type { DebuggingReport, InvestigatorKind } from "./types.js";
 
@@ -180,7 +181,10 @@ async function main(argv: string[]): Promise<void> {
   if (report.classification) {
     process.stderr.write(`\n${renderClassificationAscii(report.classification)}\n`);
   }
-  if (report.environment?.mismatches.length) {
+  if (report.specialists) {
+    process.stderr.write(`\n${renderSpecialistsAscii(report.specialists)}\n`);
+  }
+  if (report.environment) {
     process.stderr.write(`\n${renderEnvironmentAscii(report.environment)}\n`);
   }
   if (report.blastRadius) {

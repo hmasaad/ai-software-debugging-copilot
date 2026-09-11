@@ -7,7 +7,7 @@ describe("Incident Agent", () => {
     const agent = new IncidentAgent();
     expect(agent.id).toBe("incident-agent");
     expect(agent.name).toBe(INCIDENT_AGENT.name);
-    expect(agent.responsibility).toBe("Produce an engineer-friendly incident report");
+    expect(agent.responsibility).toBe("Triage production crashes and write an engineer-friendly incident report");
   });
 
   it("writes a SEV-style report from specialist findings", () => {

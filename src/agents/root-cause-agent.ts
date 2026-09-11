@@ -5,10 +5,13 @@ import type {
   CauseAnalysis,
   CodeInvestigation,
   DependencyAnalysis,
+  EnvironmentAnalysis,
+  FailureClassification,
   GitInvestigation,
   LogAnalysis,
   RankedCause,
   ReproductionAnalysis,
+  SpecialistFindings,
   StackFrame,
 } from "../types.js";
 import { LogAnalyzerAgent } from "./log-analyzer.js";
@@ -46,6 +49,9 @@ export class RootCauseAgent implements SpecialistAgent<CauseAnalysis> {
       gitInvestigation: ctx.gitInvestigation,
       dependencyAnalysis: ctx.dependencyAnalysis,
       reproduction: ctx.reproduction,
+      specialists: ctx.specialists,
+      environment: ctx.environment,
+      classification: ctx.classification,
       snippetFiles:
         ctx.evidence?.sourceSnippets.map((snippet) => snippet.file) ??
         ctx.codeInvestigation?.snippets.map((snippet) => snippet.file),
@@ -59,6 +65,9 @@ export function rankCauses(input: {
   gitInvestigation?: GitInvestigation;
   dependencyAnalysis?: DependencyAnalysis;
   reproduction?: ReproductionAnalysis;
+  specialists?: SpecialistFindings;
+  environment?: EnvironmentAnalysis;
+  classification?: FailureClassification;
   snippetFiles?: string[];
 }): CauseAnalysis {
   const crashSite =
@@ -75,13 +84,25 @@ export function rankCauses(input: {
   const nullCause = nullDerefCause(input.logAnalysis, input.codeInvestigation);
   if (nullCause) raw.push(nullCause);
 
+  const flutterCause = flutterSpecialistCause(input);
+  if (flutterCause) raw.push(flutterCause);
+
+  const apiCause = networkSpecialistCause(input.specialists);
+  if (apiCause) raw.push(apiCause);
+
+  const dbCause = databaseSpecialistCause(input.specialists);
+  if (dbCause) raw.push(dbCause);
+
   const gitCause = introducingCause(input.gitInvestigation);
   if (gitCause) raw.push(gitCause);
 
   const depCause = dependencyCause(input.dependencyAnalysis);
   if (depCause) raw.push(depCause);
 
-  const envCause = environmentCause(input.logAnalysis);
+  const mismatchCause = toolchainMismatchCause(input.environment, input.classification);
+  if (mismatchCause) raw.push(mismatchCause);
+
+  const envCause = input.specialists?.network || mismatchCause ? undefined : environmentCause(input.logAnalysis);
   if (envCause) raw.push(envCause);
 
   const repro = input.reproduction?.result;
@@ -152,6 +173,86 @@ function nullDerefCause(log: LogAnalysis, code: CodeInvestigation | undefined): 
   };
 }
 
+function flutterSpecialistCause(input: Parameters<typeof rankCauses>[0]): Omit<RankedCause, "id"> | undefined {
+  const flutter = input.specialists?.flutter;
+  if (!flutter) return undefined;
+  const implicated = flutter.implicated;
+  if (!implicated.length && !flutter.usesBloc && !flutter.usesDio) return undefined;
+  const nullish = /undefined|null|nil|none|\bnan\b/.test(input.logAnalysis.error.message.toLowerCase());
+  const focus = implicated[0];
+  if (focus === "ios-build" || focus === "android-build") {
+    return {
+      kind: "flutter",
+      description: `${focus === "ios-build" ? "iOS" : "Android"} build failure — inspect Xcode/CocoaPods or Gradle before patching Dart.`,
+      evidence: [flutter.summary, ...flutter.handoff],
+      likelihood: 0.8,
+    };
+  }
+  if (focus === "platform-channel") {
+    return {
+      kind: "flutter",
+      description: "Platform channel / plugin mismatch between Dart and iOS or Android.",
+      evidence: [flutter.summary, ...flutter.handoff],
+      likelihood: 0.76,
+    };
+  }
+  if ((focus === "dio" || flutter.usesDio) && nullish) {
+    return {
+      kind: "flutter",
+      description: "Dio/API returned a null payload and a Bloc or widget dereferenced it.",
+      evidence: [flutter.summary, input.logAnalysis.error.message, ...flutter.handoff],
+      likelihood: 0.84,
+    };
+  }
+  if (focus === "bloc" || (flutter.usesBloc && nullish)) {
+    return {
+      kind: "flutter",
+      description: `Bloc/Cubit assumed a non-null state${flutter.blocs[0] ? ` in ${flutter.blocs[0]}` : ""}.`,
+      evidence: [flutter.summary, ...flutter.handoff],
+      likelihood: 0.8,
+    };
+  }
+  if (focus === "drift") {
+    return {
+      kind: "flutter",
+      description: "Drift/SQLite path failed (schema, nullability, or migration).",
+      evidence: [flutter.summary, ...flutter.handoff],
+      likelihood: 0.74,
+    };
+  }
+  return {
+    kind: "flutter",
+    description: flutter.summary,
+    evidence: flutter.handoff,
+    likelihood: 0.55,
+  };
+}
+
+function networkSpecialistCause(specialists?: SpecialistFindings): Omit<RankedCause, "id"> | undefined {
+  const network = specialists?.network;
+  if (!network) return undefined;
+  const server = network.status && /^[45]/.test(network.status);
+  return {
+    kind: "api",
+    description: network.summary,
+    evidence: [network.endpoint, network.status ? `HTTP ${network.status}` : "", ...network.handoff].filter(
+      (item): item is string => Boolean(item),
+    ),
+    likelihood: server ? 0.78 : 0.62,
+  };
+}
+
+function databaseSpecialistCause(specialists?: SpecialistFindings): Omit<RankedCause, "id"> | undefined {
+  const database = specialists?.database;
+  if (!database) return undefined;
+  return {
+    kind: "database",
+    description: database.summary,
+    evidence: [database.engine, database.operation, ...database.handoff].filter((item): item is string => Boolean(item)),
+    likelihood: database.engine && database.engine !== "unknown" ? 0.72 : 0.5,
+  };
+}
+
 function introducingCause(git: GitInvestigation | undefined): Omit<RankedCause, "id"> | undefined {
   const introducing = git?.introducing;
   if (!introducing) return undefined;
@@ -174,6 +275,49 @@ function dependencyCause(deps: DependencyAnalysis | undefined): Omit<RankedCause
   };
 }
 
+function toolchainMismatchCause(
+  environment?: EnvironmentAnalysis,
+  classification?: FailureClassification,
+): Omit<RankedCause, "id"> | undefined {
+  if (!environment?.mismatches.length) return undefined;
+  const tools = environment.mismatches.map((item) => item.tool).join(", ");
+  const buildish =
+    classification?.family === "build" ||
+    classification?.category === "dependency-issue" ||
+    classification?.category === "configuration-environment" ||
+    classification?.category === "build-failure";
+  return {
+    kind: "environment",
+    description: `Potential environment mismatch detected (${tools}).`,
+    evidence: [
+      `${environment.localLabel}: ${describeSide(environment.local)}`,
+      environment.baseline
+        ? `${environment.baselineLabel ?? "Developer B"}: ${describeSide(environment.baseline)}`
+        : "",
+      ...environment.mismatches.map((item) => `${item.tool}: ${item.expected} vs ${item.actual}`),
+    ].filter(Boolean),
+    likelihood: buildish ? 0.88 : 0.62,
+  };
+}
+
+function describeSide(runtime: {
+  flutter?: string;
+  xcode?: string;
+  gradle?: string;
+  dart?: string;
+  kotlin?: string;
+}): string {
+  return [
+    runtime.flutter ? `Flutter ${runtime.flutter}` : undefined,
+    runtime.dart ? `Dart ${runtime.dart}` : undefined,
+    runtime.xcode ? `Xcode ${runtime.xcode}` : undefined,
+    runtime.gradle ? `Gradle ${runtime.gradle}` : undefined,
+    runtime.kotlin ? `Kotlin ${runtime.kotlin}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
 function environmentCause(log: LogAnalysis): Omit<RankedCause, "id"> | undefined {
   const msg = `${log.error.type ?? ""} ${log.error.message}`.toLowerCase();
   if (!/timeout|econnrefused|enotfound|network|socket/.test(msg)) return undefined;
@@ -189,6 +333,9 @@ function scoreConfidence(leading: RankedCause | undefined, input: Parameters<typ
   let confidence = leading?.likelihood ?? 0.35;
   if (input.reproduction?.result.reproduced) confidence += 0.08;
   if (input.reproduction?.match === "matched") confidence += 0.12;
+  if (input.specialists?.flutter?.implicated.length) confidence += 0.04;
+  if (input.specialists?.crash?.kind === "null-crash") confidence += 0.03;
+  if (input.environment?.mismatches.length) confidence += 0.05;
   if (input.gitInvestigation?.introducing) confidence += 0.04;
   if (input.codeInvestigation?.trace.some((step) => step.role === "crash-site")) confidence += 0.04;
   return clamp(confidence, 0.05, 0.96);
@@ -212,6 +359,12 @@ function buildCauseHandoff(
   if (leading) notes.push(`Investigate ${leading.id} (${leading.kind}) first: ${leading.description}`);
   if (leading?.kind === "dependency") {
     notes.push("Do not patch application code until the install/version hypothesis is ruled out.");
+  }
+  if (leading?.kind === "environment") {
+    notes.push("Align Flutter/Dart/Xcode/Gradle/Kotlin with the working machine before patching application code.");
+  }
+  if (leading?.kind === "flutter" || leading?.kind === "api" || leading?.kind === "database") {
+    notes.push("Start from the specialist handoff before a generic source patch.");
   }
   if (reproduction?.result.reproduced && reproduction.match === "matched") {
     notes.push(`Reproduction matched the report (${Math.round(reproduction.confidence * 100)}%).`);

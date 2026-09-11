@@ -4,8 +4,9 @@ import path from "node:path";
 import { classifyFailure } from "../analysis/classify.js";
 import { attemptSummary } from "../analysis/attempts.js";
 import { buildBlastRadius } from "../analysis/blast-radius.js";
-import { analyzeEnvironment } from "../collectors/runtime.js";
+import { analyzeEnvironment, renderEnvironmentAscii } from "../collectors/runtime.js";
 import { recallIncidents, rememberIncident } from "../analysis/memory.js";
+import { buildProductionIncident, renderProductionIncidentAscii } from "../analysis/production.js";
 import type { EvalCaseResult, EvalMetrics, EvalRun, RuntimeContext } from "../types.js";
 
 export async function runEvalSuite(): Promise<EvalRun> {
@@ -14,6 +15,7 @@ export async function runEvalSuite(): Promise<EvalRun> {
     evalClassifyNull(),
     evalClassifyGradle(),
     evalEnvironmentMismatch(),
+    evalProductionIncident(),
     evalBlastRadius(),
     await evalMemory(),
     evalAttempts(),
@@ -85,14 +87,65 @@ function evalEnvironmentMismatch(): EvalCaseResult {
     local,
     extraContext: "Developer B\nFlutter 3.27\nXcode 15.1",
   });
+  const ascii = renderEnvironmentAscii(analysis);
   const passed =
     analysis.mismatches.some((item) => item.tool === "flutter") &&
-    analysis.mismatches.some((item) => item.tool === "xcode");
+    analysis.mismatches.some((item) => item.tool === "xcode") &&
+    ascii.includes("Developer A") &&
+    ascii.includes("Developer B") &&
+    ascii.includes("Potential environment mismatch detected.");
   return {
     id: "env-mismatch",
     title: "Detect Flutter/Xcode environment mismatch",
     passed,
     detail: analysis.summary,
+    durationMs: Date.now() - started,
+  };
+}
+
+function evalProductionIncident(): EvalCaseResult {
+  const started = Date.now();
+  const incident = buildProductionIncident({
+    bug: {
+      repoPath: "/tmp",
+      version: "1.0.181",
+      affectedUsers: 327,
+      firstSeen: "14:32 UTC",
+      incidentSource: "crashlytics",
+    },
+    gitInvestigation: {
+      evidence: { available: true, recentCommits: [], commitsTouchingSuspects: [], blame: [] },
+      pullRequests: [],
+      suspects: [],
+      introducing: {
+        sha: "abc1234",
+        author: "Dev",
+        date: "2026-09-10",
+        subject: "Firebase initialization change",
+        score: 0.9,
+        reasons: ["blame"],
+      },
+      summary: "",
+      handoff: [],
+    },
+  });
+  const ascii = incident ? renderProductionIncidentAscii(incident) : "";
+  const passed =
+    Boolean(incident) &&
+    incident?.recommendedAction === "rollback" &&
+    Math.round((incident?.confidence ?? 0) * 100) === 91 &&
+    ascii.includes("Production Crash") &&
+    ascii.includes("Version: 1.0.181") &&
+    ascii.includes("Affected users: 327") &&
+    ascii.includes("First seen: 14:32 UTC") &&
+    ascii.includes("Recent Firebase initialization change") &&
+    ascii.includes("Confidence: 91%") &&
+    ascii.includes("Rollback / hotfix");
+  return {
+    id: "production-incident",
+    title: "Triage a Crashlytics production crash",
+    passed,
+    detail: ascii.replace(/\n/g, " · "),
     durationMs: Date.now() - started,
   };
 }
@@ -122,7 +175,12 @@ function evalBlastRadius(): EvalCaseResult {
       handoff: [],
     },
   });
-  const passed = analysis.high.includes("SavingsBloc") && analysis.low.includes("MediaScreen");
+  const passed =
+    analysis.high.includes("Savings screen") &&
+    analysis.high.includes("Savings reports") &&
+    analysis.high.includes("Shareout calculation") &&
+    analysis.low.includes("Media screen") &&
+    analysis.usedBy.some((node) => node.name === "SavingsBloc");
   return {
     id: "blast-radius",
     title: "Blast radius of SavingsRepository",
@@ -189,7 +247,7 @@ function scoreMetrics(cases: EvalCaseResult[], elapsedMs: number): EvalMetrics {
   };
   const passed = cases.filter((item) => item.passed).length / Math.max(1, cases.length);
   return {
-    rootCauseAccuracy: rate(["classify-null", "classify-gradle", "blast-radius"]),
+    rootCauseAccuracy: rate(["classify-null", "classify-gradle", "blast-radius", "production-incident"]),
     reproductionRate: rate(["patch-loop", "memory-similar"]),
     fixSuccessRate: rate(["patch-loop"]),
     regressionTestRate: rate(["memory-similar", "patch-loop"]),
