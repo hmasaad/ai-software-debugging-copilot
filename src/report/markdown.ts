@@ -3,6 +3,7 @@ import path from "node:path";
 import { renderEnvironmentAscii } from "../collectors/runtime.js";
 import { renderProductionIncidentAscii } from "../analysis/production.js";
 import { renderBlastRadiusAscii } from "../analysis/blast-radius.js";
+import { renderMemoryAscii } from "../analysis/memory.js";
 import type { DebuggingReport } from "../types.js";
 
 export function renderMarkdownReport(report: DebuggingReport): string {
@@ -100,7 +101,7 @@ export function renderMarkdownReport(report: DebuggingReport): string {
       ? `## Blast radius\n\n${renderBlastRadiusAscii(report.blastRadius)}`
       : "",
     "",
-    report.memory ? `## Debugging memory\n\n${report.memory.summary}` : "",
+    report.memory ? `## Debugging memory\n\n${renderMemoryAscii(report.memory)}` : "",
     "",
     report.production
       ? `## Production incident\n\n${renderProductionIncidentAscii(report.production)}${

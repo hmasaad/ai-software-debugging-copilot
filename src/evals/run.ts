@@ -1,25 +1,13 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { classifyFailure } from "../analysis/classify.js";
-import { attemptSummary } from "../analysis/attempts.js";
-import { buildBlastRadius } from "../analysis/blast-radius.js";
-import { analyzeEnvironment, renderEnvironmentAscii } from "../collectors/runtime.js";
-import { recallIncidents, rememberIncident } from "../analysis/memory.js";
-import { buildProductionIncident, renderProductionIncidentAscii } from "../analysis/production.js";
-import type { EvalCaseResult, EvalMetrics, EvalRun, RuntimeContext } from "../types.js";
+import type { EvalCaseResult, EvalMetrics, EvalRun } from "../types.js";
+import { KNOWN_BUGS } from "./dataset.js";
+import { evaluateKnownBug } from "./evaluate.js";
 
 export async function runEvalSuite(): Promise<EvalRun> {
   const started = Date.now();
-  const cases: EvalCaseResult[] = [
-    evalClassifyNull(),
-    evalClassifyGradle(),
-    evalEnvironmentMismatch(),
-    evalProductionIncident(),
-    evalBlastRadius(),
-    await evalMemory(),
-    evalAttempts(),
-  ];
+  const cases: EvalCaseResult[] = [];
+  for (const bug of KNOWN_BUGS) {
+    cases.push(await evaluateKnownBug(bug));
+  }
   const metrics = scoreMetrics(cases, Date.now() - started);
   return {
     cases,
@@ -29,7 +17,7 @@ export async function runEvalSuite(): Promise<EvalRun> {
 }
 
 export function renderEvalDashboard(metrics: EvalMetrics): string {
-  const line = (label: string, value: string) => `${label.padEnd(24)}${value}`;
+  const line = (label: string, value: string) => `${label.padEnd(26)}${value}`;
   return [
     "DEBUGGING COPILOT EVALS",
     "",
@@ -39,221 +27,50 @@ export function renderEvalDashboard(metrics: EvalMetrics): string {
     line("Regression Test Rate", pct(metrics.regressionTestRate)),
     line("False Positive Rate", pct(metrics.falsePositiveRate)),
     line("Avg. Debug Time", formatDuration(metrics.avgDebugTimeMs)),
-    line("Avg. Iterations", metrics.avgIterations.toFixed(1)),
   ].join("\n");
 }
 
-function evalClassifyNull(): EvalCaseResult {
-  const started = Date.now();
-  const result = classifyFailure({
-    message: "Null check operator used on a null value",
-    stackTrace: "SavingsMemberMediaBloc.dart:217",
-  });
-  const passed = result.category === "runtime-crash" && result.subtype === "Null Crash";
-  return {
-    id: "classify-null",
-    title: "Classify Dart null crash",
-    passed,
-    detail: result.summary,
-    durationMs: Date.now() - started,
-  };
+export function renderEvalFooter(run: EvalRun): string {
+  const failed = run.metrics.caseCount - run.metrics.passedCount;
+  const iterations = `Avg. iterations ${run.metrics.avgIterations.toFixed(1)}`;
+  return `${run.metrics.caseCount} known bugs  ·  ${run.metrics.passedCount} passed  ·  ${failed} failed  ·  ${iterations}`;
 }
 
-function evalClassifyGradle(): EvalCaseResult {
-  const started = Date.now();
-  const result = classifyFailure({ message: "FAILURE: Build failed with an exception. Gradle task assembleDebug" });
-  const passed = result.category === "build-failure" && result.subtype === "Gradle";
-  return {
-    id: "classify-gradle",
-    title: "Classify Gradle build failure",
-    passed,
-    detail: result.summary,
-    durationMs: Date.now() - started,
-  };
-}
-
-function evalEnvironmentMismatch(): EvalCaseResult {
-  const started = Date.now();
-  const local: RuntimeContext = {
-    os: "darwin",
-    arch: "arm64",
-    flutter: "3.44",
-    xcode: "16.2",
-    cwd: "/tmp",
-    ci: false,
-    envHints: [],
-  };
-  const analysis = analyzeEnvironment({
-    local,
-    extraContext: "Developer B\nFlutter 3.27\nXcode 15.1",
-  });
-  const ascii = renderEnvironmentAscii(analysis);
-  const passed =
-    analysis.mismatches.some((item) => item.tool === "flutter") &&
-    analysis.mismatches.some((item) => item.tool === "xcode") &&
-    ascii.includes("Developer A") &&
-    ascii.includes("Developer B") &&
-    ascii.includes("Potential environment mismatch detected.");
-  return {
-    id: "env-mismatch",
-    title: "Detect Flutter/Xcode environment mismatch",
-    passed,
-    detail: analysis.summary,
-    durationMs: Date.now() - started,
-  };
-}
-
-function evalProductionIncident(): EvalCaseResult {
-  const started = Date.now();
-  const incident = buildProductionIncident({
-    bug: {
-      repoPath: "/tmp",
-      version: "1.0.181",
-      affectedUsers: 327,
-      firstSeen: "14:32 UTC",
-      incidentSource: "crashlytics",
-    },
-    gitInvestigation: {
-      evidence: { available: true, recentCommits: [], commitsTouchingSuspects: [], blame: [] },
-      pullRequests: [],
-      suspects: [],
-      introducing: {
-        sha: "abc1234",
-        author: "Dev",
-        date: "2026-09-10",
-        subject: "Firebase initialization change",
-        score: 0.9,
-        reasons: ["blame"],
-      },
-      summary: "",
-      handoff: [],
-    },
-  });
-  const ascii = incident ? renderProductionIncidentAscii(incident) : "";
-  const passed =
-    Boolean(incident) &&
-    incident?.recommendedAction === "rollback" &&
-    Math.round((incident?.confidence ?? 0) * 100) === 91 &&
-    ascii.includes("Production Crash") &&
-    ascii.includes("Version: 1.0.181") &&
-    ascii.includes("Affected users: 327") &&
-    ascii.includes("First seen: 14:32 UTC") &&
-    ascii.includes("Recent Firebase initialization change") &&
-    ascii.includes("Confidence: 91%") &&
-    ascii.includes("Rollback / hotfix");
-  return {
-    id: "production-incident",
-    title: "Triage a Crashlytics production crash",
-    passed,
-    detail: ascii.replace(/\n/g, " · "),
-    durationMs: Date.now() - started,
-  };
-}
-
-function evalBlastRadius(): EvalCaseResult {
-  const started = Date.now();
-  const analysis = buildBlastRadius({
-    codeInvestigation: {
-      origin: {
-        file: "lib/savings/savings_repository.dart",
-        functionName: "SavingsRepository",
-        raw: "",
-        inProject: true,
-      },
-      trace: [],
-      functions: [],
-      callers: [
-        { file: "lib/savings/savings_bloc.dart", line: 10, text: "SavingsBloc(this.repository)" },
-        { file: "lib/savings/savings_details_bloc.dart", line: 8, text: "SavingsDetailsBloc" },
-        { file: "lib/reports/reports_bloc.dart", line: 12, text: "ReportsBloc" },
-        { file: "lib/shareout/shareout_bloc.dart", line: 9, text: "ShareoutBloc" },
-        { file: "lib/media/media_screen.dart", line: 4, text: "MediaScreen" },
-      ],
-      suspects: [],
-      snippets: [],
-      summary: "",
-      handoff: [],
-    },
-  });
-  const passed =
-    analysis.high.includes("Savings screen") &&
-    analysis.high.includes("Savings reports") &&
-    analysis.high.includes("Shareout calculation") &&
-    analysis.low.includes("Media screen") &&
-    analysis.usedBy.some((node) => node.name === "SavingsBloc");
-  return {
-    id: "blast-radius",
-    title: "Blast radius of SavingsRepository",
-    passed,
-    detail: analysis.summary,
-    durationMs: Date.now() - started,
-  };
-}
-
-async function evalMemory(): Promise<EvalCaseResult> {
-  const started = Date.now();
-  const dir = await mkdtemp(path.join(os.tmpdir(), "debug-copilot-memory-"));
-  try {
-    await rememberIncident({
-      repoPath: dir,
-      errorType: "NullCheckError",
-      errorMessage: "Null check operator used on a null value",
-      category: "runtime-crash",
-      rootCause: "getSavingsMedia returned null",
-      fix: "Handle null API response",
-      resolution: "resolved",
-      files: ["SavingsMemberMediaBloc.dart"],
-    });
-    const memory = await recallIncidents({
-      repoPath: dir,
-      errorType: "NullCheckError",
-      errorMessage: "Null check operator used on a null value",
-      category: "runtime-crash",
-      files: ["SavingsMemberMediaBloc.dart"],
-    });
-    const passed = memory.matches.length >= 1 && /previous incident/i.test(memory.summary);
-    return {
-      id: "memory-similar",
-      title: "Recall similar historical incidents",
-      passed,
-      detail: memory.summary,
-      durationMs: Date.now() - started,
-    };
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
-function evalAttempts(): EvalCaseResult {
-  const started = Date.now();
-  const log = [attemptSummary(1, "tests-failed"), attemptSummary(2, "tests-failed"), attemptSummary(3, "tests-passed")].join(
-    "\n",
+export function evalsBelowSlo(run: EvalRun): boolean {
+  const requiredFailed = run.cases.some((item) => item.required && !item.passed);
+  return (
+    requiredFailed ||
+    run.metrics.caseCount !== 100 ||
+    run.metrics.rootCauseAccuracy < 0.75 ||
+    run.metrics.reproductionRate < 0.7 ||
+    run.metrics.fixSuccessRate < 0.6
   );
-  const passed = log.includes("Attempt 1 → Tests failed") && log.includes("Attempt 3 → Tests passed");
-  return {
-    id: "patch-loop",
-    title: "Patch → test → verify attempt log",
-    passed,
-    detail: log.replace(/\n/g, " · "),
-    durationMs: Date.now() - started,
-  };
 }
 
 function scoreMetrics(cases: EvalCaseResult[], elapsedMs: number): EvalMetrics {
-  const rate = (ids: string[]) => {
-    const subset = cases.filter((item) => ids.includes(item.id));
-    if (!subset.length) return 0;
-    return subset.filter((item) => item.passed).length / subset.length;
+  const rate = (key: "rootCause" | "reproduction" | "fix" | "test"): number => {
+    const scored = cases.filter((item) => item.dimensions?.[key] !== undefined);
+    if (!scored.length) return 0;
+    return scored.filter((item) => item.dimensions?.[key]).length / scored.length;
   };
-  const passed = cases.filter((item) => item.passed).length / Math.max(1, cases.length);
+  const traps = cases.filter((item) => item.dimensions?.falsePositive !== undefined);
+  const falsePositives = traps.filter((item) => item.dimensions?.falsePositive).length;
+  const iterations = cases
+    .map((item) => item.dimensions?.iterations)
+    .filter((value): value is number => typeof value === "number");
+  const avgIterations = iterations.length
+    ? iterations.reduce((sum, value) => sum + value, 0) / iterations.length
+    : 0;
   return {
-    rootCauseAccuracy: rate(["classify-null", "classify-gradle", "blast-radius", "production-incident"]),
-    reproductionRate: rate(["patch-loop", "memory-similar"]),
-    fixSuccessRate: rate(["patch-loop"]),
-    regressionTestRate: rate(["memory-similar", "patch-loop"]),
-    falsePositiveRate: Math.max(0, 1 - passed),
+    rootCauseAccuracy: rate("rootCause"),
+    reproductionRate: rate("reproduction"),
+    fixSuccessRate: rate("fix"),
+    regressionTestRate: rate("test"),
+    falsePositiveRate: falsePositives / Math.max(1, cases.length),
     avgDebugTimeMs: elapsedMs / Math.max(1, cases.length),
-    avgIterations: 3,
+    avgIterations,
+    caseCount: cases.length,
+    passedCount: cases.filter((item) => item.passed).length,
   };
 }
 

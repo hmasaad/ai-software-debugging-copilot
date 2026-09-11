@@ -527,6 +527,7 @@ export type CauseKind =
   | "api"
   | "database"
   | "flutter"
+  | "known-incident"
   | "unreproducible"
   | "untested";
 
@@ -559,7 +560,8 @@ export type EvidenceGraphNodeKind =
   | "commit"
   | "pr"
   | "dependency"
-  | "environment";
+  | "environment"
+  | "memory";
 
 export interface EvidenceGraphNode {
   id: string;
@@ -791,6 +793,7 @@ export interface IncidentMemoryEntry {
   fix: string;
   resolution: string;
   files: string[];
+  fingerprint?: string;
 }
 
 export interface MemoryMatch {
@@ -800,6 +803,7 @@ export interface MemoryMatch {
 
 export interface DebuggingMemory {
   stored: boolean;
+  latest?: IncidentMemoryEntry;
   matches: MemoryMatch[];
   summary: string;
 }
@@ -818,12 +822,24 @@ export interface ProductionIncident {
   summary: string;
 }
 
+export interface EvalDimensions {
+  rootCause?: boolean;
+  reproduction?: boolean;
+  fix?: boolean;
+  test?: boolean;
+  /** True when this case is a false-positive mistake (bad). */
+  falsePositive?: boolean;
+  iterations?: number;
+}
+
 export interface EvalCaseResult {
   id: string;
   title: string;
   passed: boolean;
   detail: string;
   durationMs: number;
+  required?: boolean;
+  dimensions?: EvalDimensions;
 }
 
 export interface EvalMetrics {
@@ -834,6 +850,8 @@ export interface EvalMetrics {
   falsePositiveRate: number;
   avgDebugTimeMs: number;
   avgIterations: number;
+  caseCount: number;
+  passedCount: number;
 }
 
 export interface EvalRun {

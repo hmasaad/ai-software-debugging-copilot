@@ -171,6 +171,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     classification,
     specialists: findings,
     environment,
+    memory,
   });
   agentRuns.push(causeRun);
   evidence.causeAnalysis = causeAnalysis;
@@ -217,6 +218,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
       previousFailure: lastFailure,
       classification,
       environment,
+      memory,
     });
     agentRuns.push(fixRun);
 
@@ -330,6 +332,10 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   });
   evidence.blastRadius = blastRadius;
 
+  emit({
+    stage: "memory",
+    message: "Store this incident as knowledge...",
+  });
   memory = await rememberIncident({
     repoPath,
     errorType: evidence.error.type,

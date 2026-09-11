@@ -82,12 +82,17 @@ export class FixAgent implements SpecialistAgent<FixAnalysis> {
       strategy = heuristic.strategy;
     }
 
+    const handoff = buildFixHandoff(proposal, strategy, leading?.description);
+    const previous = ctx.memory?.matches[0]?.entry;
+    if (previous?.fix) {
+      handoff.unshift(`Debugging memory: a similar incident was fixed with "${previous.fix}".`);
+    }
     return {
       proposal,
       strategy,
       source,
       summary: buildFixSummary(proposal, strategy, source),
-      handoff: buildFixHandoff(proposal, strategy, leading?.description),
+      handoff,
     };
   }
 }

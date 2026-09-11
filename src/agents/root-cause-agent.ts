@@ -4,6 +4,7 @@ import type {
   AgentRun,
   CauseAnalysis,
   CodeInvestigation,
+  DebuggingMemory,
   DependencyAnalysis,
   EnvironmentAnalysis,
   FailureClassification,
@@ -52,6 +53,7 @@ export class RootCauseAgent implements SpecialistAgent<CauseAnalysis> {
       specialists: ctx.specialists,
       environment: ctx.environment,
       classification: ctx.classification,
+      memory: ctx.memory ?? ctx.evidence?.memory,
       snippetFiles:
         ctx.evidence?.sourceSnippets.map((snippet) => snippet.file) ??
         ctx.codeInvestigation?.snippets.map((snippet) => snippet.file),
@@ -68,6 +70,7 @@ export function rankCauses(input: {
   specialists?: SpecialistFindings;
   environment?: EnvironmentAnalysis;
   classification?: FailureClassification;
+  memory?: DebuggingMemory;
   snippetFiles?: string[];
 }): CauseAnalysis {
   const crashSite =
@@ -98,6 +101,9 @@ export function rankCauses(input: {
 
   const depCause = dependencyCause(input.dependencyAnalysis);
   if (depCause) raw.push(depCause);
+
+  const memoryCause = knownIncidentCause(input.memory);
+  if (memoryCause) raw.push(memoryCause);
 
   const mismatchCause = toolchainMismatchCause(input.environment, input.classification);
   if (mismatchCause) raw.push(mismatchCause);
@@ -275,6 +281,22 @@ function dependencyCause(deps: DependencyAnalysis | undefined): Omit<RankedCause
   };
 }
 
+function knownIncidentCause(memory?: DebuggingMemory): Omit<RankedCause, "id"> | undefined {
+  const top = memory?.matches[0];
+  if (!top || top.score < 0.45) return undefined;
+  const count = memory?.matches.length ?? 0;
+  return {
+    kind: "known-incident",
+    description: `${count} previous incident${count === 1 ? "" : "s"} had the same pattern: ${top.entry.rootCause}`,
+    evidence: [
+      top.entry.fix ? `Previous fix: ${top.entry.fix}` : "",
+      top.entry.resolution ? `Resolution: ${top.entry.resolution}` : "",
+      ...memory!.matches.slice(0, 3).map((match) => match.entry.rootCause),
+    ].filter(Boolean),
+    likelihood: Math.min(0.86, 0.5 + top.score * 0.25 + Math.min(0.12, Math.max(0, count - 1) * 0.04)),
+  };
+}
+
 function toolchainMismatchCause(
   environment?: EnvironmentAnalysis,
   classification?: FailureClassification,
@@ -336,6 +358,7 @@ function scoreConfidence(leading: RankedCause | undefined, input: Parameters<typ
   if (input.specialists?.flutter?.implicated.length) confidence += 0.04;
   if (input.specialists?.crash?.kind === "null-crash") confidence += 0.03;
   if (input.environment?.mismatches.length) confidence += 0.05;
+  if (input.memory?.matches.length) confidence += 0.05;
   if (input.gitInvestigation?.introducing) confidence += 0.04;
   if (input.codeInvestigation?.trace.some((step) => step.role === "crash-site")) confidence += 0.04;
   return clamp(confidence, 0.05, 0.96);
@@ -362,6 +385,9 @@ function buildCauseHandoff(
   }
   if (leading?.kind === "environment") {
     notes.push("Align Flutter/Dart/Xcode/Gradle/Kotlin with the working machine before patching application code.");
+  }
+  if (leading?.kind === "known-incident") {
+    notes.push("Reuse the historical fix as a starting point, then confirm it still matches this crash site.");
   }
   if (leading?.kind === "flutter" || leading?.kind === "api" || leading?.kind === "database") {
     notes.push("Start from the specialist handoff before a generic source patch.");

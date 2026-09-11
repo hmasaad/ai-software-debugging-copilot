@@ -468,12 +468,20 @@ function blastRadiusCard(analysis: BlastRadiusAnalysis): string {
 }
 
 function memoryCard(memory: DebuggingMemory): string {
+  const known = memory.matches[0]?.entry ?? memory.latest;
+  const chain = known
+    ? `<p class="meta">Previous incident → root cause → fix → resolution</p>
+    <p class="lead">${esc(known.rootCause)}</p>
+    <p class="meta">Fix: ${esc(known.fix)}</p>
+    <p class="meta">Resolution: ${esc(known.resolution)}</p>`
+    : "";
   const matches = memory.matches
-    .map((match) => `<li>${esc(match.entry.rootCause)} (${Math.round(match.score * 100)}%)</li>`)
+    .map((match) => `<li>${esc(match.entry.rootCause)} — ${esc(match.entry.fix)} (${Math.round(match.score * 100)}%)</li>`)
     .join("");
   return `<div class="card">
     <h3>Debugging memory</h3>
     <p class="lead">${esc(memory.summary)}</p>
+    ${chain}
     ${matches ? `<ul>${matches}</ul>` : ""}
   </div>`;
 }

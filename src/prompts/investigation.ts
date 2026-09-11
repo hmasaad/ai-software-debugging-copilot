@@ -210,6 +210,23 @@ export function buildEvidenceBrief(
             .join("\n")
         : "",
       "",
+      `## Debugging memory`,
+      evidence.memory
+        ? [
+            evidence.memory.summary,
+            evidence.memory.matches.length
+              ? evidence.memory.matches
+                  .map(
+                    (match) =>
+                      `- ${match.entry.rootCause} → fix: ${match.entry.fix} → ${match.entry.resolution} (${Math.round(match.score * 100)}%)`,
+                  )
+                  .join("\n")
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : "",
+      "",
       `## Fix Agent`,
       evidence.fixAnalysis?.summary ?? "",
       evidence.fixAnalysis ? `Strategy: ${evidence.fixAnalysis.strategy} (${evidence.fixAnalysis.source})` : "",

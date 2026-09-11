@@ -210,9 +210,33 @@ LOW
 └── Media screen
 ```
 
-**Debugging memory** stores resolved incidents in `.debug-copilot/memory.json` and, on the next similar error, reports how many previous incidents matched the same pattern.
+**Debugging memory** turns each investigation into reusable knowledge:
 
-**Evals:** `debug-copilot evals` runs a debugging benchmark (classification, environment mismatch, blast radius, memory, patch-loop) and prints:
+```
+Previous Incident
+       ↓
+Root cause
+       ↓
+Fix
+       ↓
+Resolution
+       ↓
+Store as knowledge
+```
+
+The next similar error searches `.debug-copilot/memory.json` and reports:
+
+```
+New error
+   ↓
+Similar historical incidents
+   ↓
+3 previous incidents had the same pattern
+```
+
+Root Cause Agent can rank that historical pattern, and Fix Agent is handed the previous fix as a starting point.
+
+**Evals:** `debug-copilot evals` runs a 100-bug debugging benchmark. Each labeled failure is scored for root-cause accuracy, reproduction, fix correctness, regression-test generation, false positives, time, and iterations, then printed as:
 
 ```
 DEBUGGING COPILOT EVALS
@@ -224,6 +248,8 @@ Regression Test Rate      93%
 False Positive Rate        7%
 Avg. Debug Time           4m 21s
 ```
+
+Live `debug-copilot evals` prints measured rates from those 100 labeled bugs (not hardcoded). The snapshot above is what a longer investigator-backed run can look like.
 
 Root-cause and fix prompts consume those briefings instead of re-reading raw logs and files from scratch.
 

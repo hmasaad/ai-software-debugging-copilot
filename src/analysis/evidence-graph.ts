@@ -2,6 +2,7 @@ import path from "node:path";
 import { parsePrNumber } from "./git-regression.js";
 import type {
   CodeInvestigation,
+  DebuggingMemory,
   DependencyAnalysis,
   EnvironmentAnalysis,
   EvidenceCheck,
@@ -22,6 +23,7 @@ export function buildEvidenceGraph(input: {
   dependencyAnalysis?: DependencyAnalysis;
   reproduction?: ReproductionAnalysis;
   environment?: EnvironmentAnalysis;
+  memory?: DebuggingMemory;
   leading?: RankedCause;
   confidence: number;
 }): EvidenceGraph {
@@ -104,6 +106,14 @@ export function buildEvidenceGraph(input: {
       id: "environment",
       kind: "environment",
       label: input.environment?.mismatches.length ? "Toolchain mismatch" : "Environment",
+      detail: input.leading.description,
+    });
+  }
+  if (input.leading?.kind === "known-incident") {
+    add(nodes, seen, {
+      id: "memory",
+      kind: "memory",
+      label: "Debugging memory",
       detail: input.leading.description,
     });
   }
@@ -228,6 +238,15 @@ function evidenceChecks(
         : "No toolchain mismatch detected.",
     });
   }
+  if (input.memory) {
+    checks.push({
+      id: "memory",
+      label: "Historical incidents",
+      present: input.memory.matches.length > 0,
+      supports: input.memory.matches.length > 0,
+      detail: input.memory.summary,
+    });
+  }
   return checks;
 }
 
@@ -284,6 +303,7 @@ function claimFor(leading: RankedCause | undefined, api: boolean, nullish: boole
   if (leading?.kind === "api") return shortClaim(leading.description, "API/backend failure");
   if (leading?.kind === "database") return shortClaim(leading.description, "Database failure");
   if (leading?.kind === "environment") return shortClaim(leading.description, "Environment failure");
+  if (leading?.kind === "known-incident") return shortClaim(leading.description, "Known historical incident");
   if (leading?.kind === "unreproducible") return "Could not reproduce locally";
   if (api && nullish) return "Null API response";
   if (nullish) return "Null/undefined dereference";

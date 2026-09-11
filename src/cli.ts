@@ -13,7 +13,7 @@ import { renderBlastRadiusAscii } from "./analysis/blast-radius.js";
 import { renderEnvironmentAscii } from "./collectors/runtime.js";
 import { renderProductionIncidentAscii } from "./analysis/production.js";
 import { renderMemoryAscii } from "./analysis/memory.js";
-import { runEvalSuite } from "./evals/run.js";
+import { evalsBelowSlo, renderEvalFooter, runEvalSuite } from "./evals/run.js";
 import { renderSpecialistsAscii } from "./agents/specialists.js";
 import { serveInvestigationBoard } from "./board/serve.js";
 import type { DebuggingReport, InvestigatorKind } from "./types.js";
@@ -29,7 +29,7 @@ tests fail.
 Commands:
   debug-copilot [options]     Investigate a bug
   debug-copilot board         Open the last investigation board
-  debug-copilot evals         Run the debugging benchmark
+  debug-copilot evals         Run the 100-bug debugging benchmark
 
 With --autonomous the agent works in an isolated git worktree: inspect,
 search, git history, reproduce, patch, re-test, inspect the diff, and revert
@@ -109,11 +109,12 @@ async function main(argv: string[]): Promise<void> {
 
   if (positionals[0] === "evals") {
     const evals = await runEvalSuite();
-    process.stdout.write(`${evals.summary}\n`);
-    for (const testCase of evals.cases) {
-      process.stderr.write(`${testCase.passed ? "✓" : "✗"} ${testCase.title} — ${testCase.detail}\n`);
+    process.stdout.write(`${evals.summary}\n\n${renderEvalFooter(evals)}\n`);
+    const failures = evals.cases.filter((item) => !item.passed);
+    for (const testCase of failures) {
+      process.stderr.write(`✗ ${testCase.id} ${testCase.title} — ${testCase.detail}\n`);
     }
-    if (evals.cases.some((item) => !item.passed)) process.exitCode = 2;
+    if (evalsBelowSlo(evals)) process.exitCode = 2;
     return;
   }
 
@@ -193,7 +194,7 @@ async function main(argv: string[]): Promise<void> {
   if (report.production) {
     process.stderr.write(`\n${renderProductionIncidentAscii(report.production)}\n`);
   }
-  if (report.memory?.matches.length) {
+  if (report.memory) {
     process.stderr.write(`\n${renderMemoryAscii(report.memory)}\n`);
   }
   if (values.report) process.stderr.write(`Report: ${values.report}\n`);

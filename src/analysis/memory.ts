@@ -14,12 +14,22 @@ export function memoryPath(repoPath: string): string {
   return path.join(repoPath, MEMORY_DIR, MEMORY_FILE);
 }
 
+export function incidentFingerprint(input: {
+  errorType?: string;
+  errorMessage: string;
+  files?: string[];
+}): string {
+  const tokens = tokenize(input.errorMessage).slice(0, 6).join("-");
+  const files = (input.files ?? []).map((file) => path.basename(file)).slice(0, 3).join(",");
+  return [input.errorType ?? "Error", tokens, files].filter(Boolean).join("|");
+}
+
 export async function loadMemory(repoPath: string): Promise<IncidentMemoryEntry[]> {
   const file = memoryPath(repoPath);
   if (!existsSync(file)) return [];
   try {
     const parsed = JSON.parse(await readFile(file, "utf8")) as { incidents?: IncidentMemoryEntry[] };
-    return parsed.incidents ?? [];
+    return (parsed.incidents ?? []).map(normalizeEntry);
   } catch {
     return [];
   }
@@ -37,14 +47,11 @@ export async function recallIncidents(input: {
     .map((entry) => ({ entry, score: similarity(input, entry) }))
     .filter((match) => match.score >= 0.35)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
-  const count = matches.length;
+    .slice(0, 8);
   return {
     stored: false,
     matches,
-    summary: count
-      ? `${count} previous incident${count === 1 ? "" : "s"} had the same pattern`
-      : "No similar historical incidents.",
+    summary: summarizeMatches(matches.length),
   };
 }
 
@@ -70,6 +77,7 @@ export async function rememberIncident(input: {
     fix: input.fix.slice(0, 400),
     resolution: input.resolution.slice(0, 240),
     files: (input.files ?? []).slice(0, 8),
+    fingerprint: incidentFingerprint(input),
   };
   incidents.unshift(entry);
   const dir = path.join(input.repoPath, MEMORY_DIR);
@@ -77,19 +85,71 @@ export async function rememberIncident(input: {
   await writeFile(path.join(dir, MEMORY_FILE), JSON.stringify({ incidents: incidents.slice(0, 100) }, null, 2), "utf8");
   return {
     stored: true,
+    latest: entry,
     matches: previous.matches,
     summary: previous.matches.length
-      ? `${previous.matches.length} previous incident${previous.matches.length === 1 ? "" : "s"} had the same pattern`
+      ? summarizeMatches(previous.matches.length)
       : "Stored as knowledge for later incidents.",
   };
 }
 
 export function renderMemoryAscii(memory: DebuggingMemory): string {
-  const lines = ["Debugging memory", "", memory.summary];
-  for (const match of memory.matches.slice(0, 3)) {
-    lines.push(`- ${match.entry.errorType ?? "Error"}: ${match.entry.rootCause} (${Math.round(match.score * 100)}%)`);
+  const known = memory.matches[0]?.entry ?? memory.latest;
+  const lines = ["Debugging memory", ""];
+  if (known) {
+    lines.push(
+      "Previous Incident",
+      "       ↓",
+      "Root cause",
+      known.rootCause,
+      "       ↓",
+      "Fix",
+      known.fix,
+      "       ↓",
+      "Resolution",
+      known.resolution,
+      "       ↓",
+      "Store as knowledge",
+    );
+  }
+  if (memory.matches.length) {
+    if (known) lines.push("");
+    lines.push(
+      "New error",
+      "   ↓",
+      "Similar historical incidents",
+      "   ↓",
+      summarizeMatches(memory.matches.length),
+    );
+    for (const match of memory.matches.slice(0, 3)) {
+      lines.push(
+        `- ${match.entry.errorType ?? "Error"}: ${match.entry.rootCause} (${Math.round(match.score * 100)}%)`,
+        `  Fix: ${match.entry.fix}`,
+      );
+    }
+  } else if (!known) {
+    lines.push(memory.summary);
   }
   return lines.join("\n");
+}
+
+export function summarizeMatches(count: number): string {
+  if (!count) return "No similar historical incidents.";
+  return `${count} previous incident${count === 1 ? "" : "s"} had the same pattern`;
+}
+
+function normalizeEntry(entry: IncidentMemoryEntry): IncidentMemoryEntry {
+  return {
+    ...entry,
+    files: entry.files ?? [],
+    fingerprint:
+      entry.fingerprint ??
+      incidentFingerprint({
+        errorType: entry.errorType,
+        errorMessage: entry.errorMessage,
+        files: entry.files,
+      }),
+  };
 }
 
 function similarity(
@@ -106,6 +166,8 @@ function similarity(
   score += Math.min(0.4, overlap / denom);
   const files = new Set((input.files ?? []).map((file) => path.basename(file)));
   if ([...files].some((file) => entry.files.some((known) => path.basename(known) === file))) score += 0.15;
+  const inputFp = incidentFingerprint(input);
+  if (inputFp && entry.fingerprint && inputFp === entry.fingerprint) score = Math.max(score, 0.9);
   return Math.min(1, score);
 }
 

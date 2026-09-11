@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { attemptSummary, renderAttemptLog } from "../src/analysis/attempts.js";
 import { buildBlastRadius, renderBlastRadiusAscii } from "../src/analysis/blast-radius.js";
 import { analyzeEnvironment } from "../src/collectors/runtime.js";
-import { recallIncidents, rememberIncident } from "../src/analysis/memory.js";
+import { recallIncidents, rememberIncident, renderMemoryAscii } from "../src/analysis/memory.js";
 import { buildProductionIncident, renderProductionIncidentAscii } from "../src/analysis/production.js";
 import { FlutterAgent } from "../src/agents/flutter-agent.js";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -150,6 +150,8 @@ describe("debugging memory", () => {
     });
     expect(memory.matches.length).toBeGreaterThan(0);
     expect(memory.summary).toMatch(/previous incident/i);
+    expect(renderMemoryAscii(memory)).toContain("Previous Incident");
+    expect(renderMemoryAscii(memory)).toContain("Store as knowledge");
   });
 });
 

@@ -50,12 +50,14 @@ export {
 } from "./analysis/git-regression.js";
 export { classifyFailure, renderClassificationAscii } from "./analysis/classify.js";
 export { buildBlastRadius, renderBlastRadiusAscii } from "./analysis/blast-radius.js";
+export { recallIncidents, rememberIncident, renderMemoryAscii } from "./analysis/memory.js";
 export {
   buildProductionIncident,
   parseProductionSignals,
   renderProductionIncidentAscii,
 } from "./analysis/production.js";
-export { runEvalSuite, renderEvalDashboard } from "./evals/run.js";
+export { runEvalSuite, renderEvalDashboard, renderEvalFooter, evalsBelowSlo } from "./evals/run.js";
+export { KNOWN_BUGS, buildKnownBugs } from "./evals/dataset.js";
 export type {
   BugInput,
   DebuggingReport,
@@ -84,6 +86,7 @@ export type {
   DebuggingMemory,
   ProductionIncident,
   EvalRun,
+  EvalMetrics,
   AgentRun,
   AutonomousDebugResult,
   SandboxSession,
