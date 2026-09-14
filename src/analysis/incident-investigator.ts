@@ -1,5 +1,10 @@
 import { crashFingerprint, mergeProductionInput, recommendProductionAction } from "./production.js";
-import { correlateIncident, renderCorrelationAscii } from "./correlation-engine.js";
+import {
+  collectCorrelationEvents,
+  correlateIncident,
+  isPotentialIncident,
+  renderCorrelationAscii,
+} from "./correlation-engine.js";
 import type {
   BlastRadiusAnalysis,
   BugInput,
@@ -17,7 +22,12 @@ import type {
   ValidationAnalysis,
 } from "../types.js";
 
-export { correlateIncident, renderCorrelationAscii } from "./correlation-engine.js";
+export {
+  collectCorrelationEvents,
+  correlateIncident,
+  isPotentialIncident,
+  renderCorrelationAscii,
+} from "./correlation-engine.js";
 
 export const PRODUCTION_INVESTIGATOR_FLOW = [
   "                 PRODUCTION INCIDENT",
@@ -64,13 +74,15 @@ export function detectIncident(input: {
   const signals = collectIncidentSignals({ bug, logAnalysis: input.logAnalysis, metrics });
   const spike = isErrorSpike(metrics);
   const crashFreeDrop = (metrics?.crashFreeUsers ?? 1) < 0.99 && (metrics?.crashes ?? 0) > 0;
-  const correlation = correlateIncident({
+  const overlapping = collectCorrelationEvents({
     bug,
+    blob: blobFrom(bug),
     logAnalysis: input.logAnalysis,
     gitInvestigation: input.gitInvestigation,
     dependencyAnalysis: input.dependencyAnalysis,
     metrics,
   });
+  const potential = isPotentialIncident(overlapping);
   const detected = Boolean(
     bug.incidentSource ||
       bug.version ||
@@ -78,21 +90,22 @@ export function detectIncident(input: {
       bug.firstSeen ||
       spike ||
       crashFreeDrop ||
-      correlation.potentialIncident,
+      potential,
   );
   const users = bug.affectedUsers ?? 0;
   const severity =
     users >= 100 || (metrics?.errorRate ?? 0) >= 0.05
       ? "sev-1"
-      : users >= 20 || spike || correlation.potentialIncident
+      : users >= 20 || spike || potential
         ? "sev-2"
         : detected
           ? "sev-3"
           : "sev-4";
+  const presentLabels = overlapping.filter((event) => event.present).map((event) => event.label);
   const reason = !detected
     ? "No production signals, crash backend, or metric spike."
-    : correlation.potentialIncident
-      ? correlation.summary
+    : potential
+      ? `Overlapping signals: ${presentLabels.join(" + ")}.`
       : spike
         ? "Error-rate spike correlated with a production crash."
         : users >= 100
@@ -384,17 +397,21 @@ function parseMetricsFromText(text: string): ProductionMetrics {
     parseNumber(text.match(/\b(?:p95|latency(?:[_\s-]?p95)?)\s*[:=]\s*([\d.]+)\s*ms\b/i)?.[1]);
   const baselineLatencyP95Ms =
     fromJson.baselineLatencyP95Ms ??
-    parseNumber(text.match(/\bbaseline(?:\s+p95|\s+latency)?\s*[:=]\s*([\d.]+)\s*ms\b/i)?.[1]) ??
-    parseNumber(text.match(/\bp95\s+baseline\s*[:=]\s*([\d.]+)\s*ms\b/i)?.[1]);
+    parseNumber(text.match(/\bbaseline(?:\s+(?:p95|latency))?[^\n]{0,20}?[:=]\s*([\d.]+)\s*ms\b/i)?.[1]);
   const crashFreeUsers =
     fromJson.crashFreeUsers ?? parsePercent(text, /crash[_\s-]?free(?:\s+users)?\s*[:=]\s*([\d.]+)\s*%?/i);
   const requests = fromJson.requests ?? parseNumber(text.match(/\brequests?\s*[:=]\s*(\d+)/i)?.[1]);
   const crashes = fromJson.crashes ?? parseNumber(text.match(/\bcrashes?\s*[:=]\s*(\d+)/i)?.[1]);
   const deployedMinutesAgo =
-    fromJson.deployedMinutesAgo ?? parseNumber(text.match(/\bdeployedMinutesAgo\s*[:=]\s*(\d+)/i)?.[1]);
+    fromJson.deployedMinutesAgo ??
+    parseNumber(
+      text.match(/deploy(?:ed|ment)?[^\n]{0,60}?(\d+)\s*minutes?\s+(?:ago|earlier|before)/i)?.[1] ??
+        text.match(/(\d+)\s*minutes?\s+(?:ago|earlier)[^\n]{0,40}deploy/i)?.[1],
+    );
   const newDependency =
     fromJson.newDependency ??
-    text.match(/\bnew dependency\s*[:=]?\s*([A-Za-z0-9_@/.:-]+)/i)?.[1];
+    text.match(/\bnew dependency\s*[:=]?\s*([A-Za-z0-9_@/.:-]+)/i)?.[1] ??
+    text.match(/\badded (?:package|dependency)\s+[:=]?\s*([A-Za-z0-9_@/.:-]+)/i)?.[1];
   return compactMetrics({
     errorRate,
     baselineErrorRate,
@@ -419,7 +436,7 @@ function parseMetricsJson(text: string): ProductionMetrics {
       errorRate: asRate(obj.errorRate ?? obj.error_rate),
       baselineErrorRate: asRate(obj.baselineErrorRate ?? obj.baseline_error_rate),
       latencyP95Ms: asNumber(obj.latencyP95Ms ?? obj.p95 ?? obj.p95Ms),
-      baselineLatencyP95Ms: asNumber(obj.baselineLatencyP95Ms ?? obj.baseline_p95),
+      baselineLatencyP95Ms: asNumber(obj.baselineLatencyP95Ms ?? obj.baseline_p95 ?? obj.p95Baseline),
       crashFreeUsers: asRate(obj.crashFreeUsers ?? obj.crash_free_users),
       requests: asNumber(obj.requests),
       crashes: asNumber(obj.crashes),

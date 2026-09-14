@@ -36,9 +36,12 @@ export function correlateIncident(input: {
 }): IncidentCorrelation {
   const bug = mergeProductionInput(input.bug);
   const blob = blobFrom(bug);
+  const version =
+    bug.version ?? blob.match(/\b(?:app[_\s-]?version|version|release)\s*[:=]?\s*v?(\d+\.\d+(?:\.\d+)?)/i)?.[1];
+  const scoped = version && !bug.version ? { ...bug, version } : bug;
   const metrics = input.metrics;
   const events = collectCorrelationEvents({
-    bug,
+    bug: scoped,
     blob,
     logAnalysis: input.logAnalysis,
     gitInvestigation: input.gitInvestigation,
@@ -47,25 +50,24 @@ export function correlateIncident(input: {
   });
   const present = events.filter((event) => event.present);
   const introducing = input.gitInvestigation?.introducing;
-  const deployEvent = present.find((event) => event.kind === "deployment");
-  const minutesBefore = deployMinutes(blob, metrics, bug, input.logAnalysis, input.gitInvestigation);
+  const minutesBefore = deployMinutes(blob, metrics, scoped, input.logAnalysis, input.gitInvestigation);
   const newDependency = present.find((event) => event.kind === "new-dependency")?.detail;
   const fingerprint =
     input.fingerprint ??
     crashFingerprint({
       errorType: input.logAnalysis?.error.type,
-      errorMessage: input.logAnalysis?.error.message ?? bug.message,
+      errorMessage: input.logAnalysis?.error.message ?? scoped.message,
       file: input.logAnalysis?.crashSite?.file,
     });
 
   const deploy = introducing
-    ? { sha: introducing.sha, version: bug.version, at: introducing.date, minutesBefore }
-    : bug.version || minutesBefore != null
-      ? { version: bug.version, at: bug.firstSeen, minutesBefore }
+    ? { sha: introducing.sha, version: scoped.version, at: introducing.date, minutesBefore }
+    : scoped.version || minutesBefore != null
+      ? { version: scoped.version, at: scoped.firstSeen, minutesBefore }
       : undefined;
 
   const links = buildLinks({
-    bug,
+    bug: scoped,
     events: present,
     fingerprint,
     crashFile: input.logAnalysis?.crashSite?.file,
@@ -114,7 +116,9 @@ export function collectCorrelationEvents(input: {
     input.gitInvestigation,
   );
   const dependency = resolveNewDependency(input.blob, input.metrics, input.dependencyAnalysis, input.gitInvestigation);
-  const version = input.bug.version;
+  const version =
+    input.bug.version ??
+    input.blob.match(/\b(?:app[_\s-]?version|version|release)\s*[:=]?\s*v?(\d+\.\d+(?:\.\d+)?)/i)?.[1];
   const introducing = input.gitInvestigation?.introducing;
 
   return EVENT_ORDER.map((kind) => {
@@ -256,7 +260,7 @@ function buildLinks(input: {
     links.push({
       left: "version",
       right: "crash",
-      reason: `Crashes concentrated on ${input.bug.version}`,
+      reason: `Crashes concentrated on ${input.bug.version ?? "this app version"}`,
       strength: 0.85,
     });
   }
@@ -360,8 +364,9 @@ function resolveNewDependency(
   if (deps?.likelyDependencyBug && issue?.package) return issue.package;
   const subject = git?.introducing?.subject ?? "";
   if (/\b(bump|upgrade|chore\(deps\)|add(?:ed)?)\b/i.test(subject)) {
-    const pkg = subject.match(/\b([a-z][a-z0-9_:-]*[a-z0-9])(?:@[^\s]+)?/i)?.[1];
-    if (pkg && !/^(bump|upgrade|added|add|chore)$/i.test(pkg)) return pkg;
+    const tokens = subject.match(/[a-z][a-z0-9_:-]*[a-z0-9]/gi) ?? [];
+    const pkg = tokens.find((token) => !/^(bump|upgrade|added|add|chore|deps|dependency)$/i.test(token));
+    if (pkg) return pkg;
   }
   return undefined;
 }

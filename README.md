@@ -177,7 +177,9 @@ It also records Dart, Gradle, Kotlin, OS, device, build flavor, environment vari
                   Incident Report
 ```
 
-The **Incident Correlation Engine** does not debug one error in isolation. It connects overlapping signals automatically:
+`debug-copilot incident --source crashlytics --version 1.0.181 --affected-users 327 --first-seen "14:32 UTC" --metrics '{"errorRate":"4.2%","p95":1800}'` (or put those fields in `--context`).
+
+The **Incident Correlation Engine** does not wait on a single stack trace. It connects independent signals when they line up:
 
 ```
 Crash spike
@@ -193,7 +195,7 @@ Specific app version
 Potential incident
 ```
 
-`debug-copilot incident --source crashlytics --version 1.0.181 --affected-users 327 --first-seen "14:32 UTC" --metrics '{"errorRate":"4.2%","p95":1800,"deployedMinutesAgo":15,"newDependency":"firebase_core"}'` (or put those fields in `--context`). When those events line up, the copilot treats them as one incident and recommends rollback vs hotfix:
+That cluster is one incident: same deploy, same version, same new dependency, with crashes and latency moving together. The copilot then recommends rollback vs hotfix:
 
 ```
 Production Crash

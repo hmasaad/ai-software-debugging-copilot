@@ -61,12 +61,14 @@ export {
   investigateProductionIncident,
   detectIncident,
   correlateIncident,
+  collectCorrelationEvents,
+  isPotentialIncident,
   buildRollbackPlan,
   parseProductionMetrics,
   renderProductionInvestigatorAscii,
+  renderCorrelationAscii,
   PRODUCTION_INVESTIGATOR_FLOW,
 } from "./analysis/incident-investigator.js";
-export { collectCorrelationEvents, renderCorrelationAscii } from "./analysis/correlation-engine.js";
 export { runEvalSuite, renderEvalDashboard, renderEvalFooter, evalsBelowSlo } from "./evals/run.js";
 export { KNOWN_BUGS, buildKnownBugs } from "./evals/dataset.js";
 export type {
@@ -98,6 +100,7 @@ export type {
   ProductionIncident,
   ProductionInvestigation,
   IncidentCorrelation,
+  CorrelationEvent,
   EvalRun,
   EvalMetrics,
   AgentRun,

@@ -22,7 +22,7 @@ import type {
   TestAnalysis,
   ValidationAnalysis,
 } from "../types.js";
-import { PRODUCTION_INVESTIGATOR_FLOW } from "../analysis/incident-investigator.js";
+import { PRODUCTION_INVESTIGATOR_FLOW, renderCorrelationAscii } from "../analysis/incident-investigator.js";
 
 export function renderInvestigationBoard(report: DebuggingReport): string {
   const e = report.evidence;
@@ -523,9 +523,9 @@ function investigatorCard(investigation: ProductionInvestigation): string {
         .filter((item): item is string => Boolean(item))
         .join(" · ")
     : "none";
-  const events = investigation.correlation.events
+  const chain = investigation.correlation.events
     .filter((event) => event.present)
-    .map((event) => `<li><strong>${esc(event.label)}</strong> — ${esc(event.detail)}</li>`)
+    .map((event) => `<li>${esc(event.label)} — ${esc(event.detail)}</li>`)
     .join("");
   const links = investigation.correlation.links
     .map((link) => `<li>${esc(link.left)} ↔ ${esc(link.right)} — ${esc(link.reason)}</li>`)
@@ -537,11 +537,10 @@ function investigatorCard(investigation: ProductionInvestigation): string {
       <h3>Production Incident Investigator</h3>
       <p class="meta">${esc(investigation.detection.severity.toUpperCase())} · logs ${investigation.logs.length} · crashes ${investigation.crashes.length} · ${esc(metrics)}</p>
       <p class="lead">${esc(investigation.detection.summary)}</p>
-      <h3>Incident Correlation Engine</h3>
-      <p class="lead">${esc(investigation.correlation.potentialIncident ? "Potential incident" : investigation.correlation.summary)}</p>
-      ${events ? `<ul>${events}</ul>` : ""}
       <p class="meta">${esc(investigation.correlation.summary)}</p>
+      ${chain ? `<p class="meta">Connected events</p><ul>${chain}</ul>` : ""}
       ${links ? `<ul>${links}</ul>` : ""}
+      <pre class="ascii">${esc(renderCorrelationAscii(investigation.correlation))}</pre>
       <p class="lead">${esc(investigation.rollbackPlan.summary)}</p>
       ${steps ? `<ol>${steps}</ol>` : ""}
       ${risks ? `<p class="meta">Risks</p><ul>${risks}</ul>` : ""}

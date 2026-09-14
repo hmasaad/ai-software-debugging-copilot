@@ -63,7 +63,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     });
     emit({
       stage: "correlation",
-      message: "Connecting crash spike, latency, deploy, dependency, and version...",
+      message: "Correlating crash spike, API latency, deploy, new dependency, and app version...",
     });
   }
 

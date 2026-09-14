@@ -869,9 +869,9 @@ export interface CorrelationEvent {
   kind: CorrelationEventKind;
   label: string;
   detail: string;
-  at?: string;
   present: boolean;
   weight: number;
+  at?: string;
 }
 
 export interface CorrelationLink {

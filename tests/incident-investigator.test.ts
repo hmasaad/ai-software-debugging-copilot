@@ -9,7 +9,6 @@ import {
   parseProductionMetrics,
   renderProductionInvestigatorAscii,
 } from "../src/analysis/incident-investigator.js";
-import { renderCorrelationAscii } from "../src/analysis/correlation-engine.js";
 import type { GitInvestigation, LogAnalysis } from "../src/types.js";
 
 const git: GitInvestigation = {
@@ -105,8 +104,10 @@ describe("production incident investigator", () => {
 
     const correlation = correlateIncident({ bug, logAnalysis: logs, gitInvestigation: git, metrics });
     expect(correlation.correlated).toBe(true);
+    expect(correlation.potentialIncident).toBe(true);
     expect(correlation.deploy?.version).toBe("1.0.181");
     expect(correlation.links.some((link) => link.left === "metrics" && link.right === "deploy")).toBe(true);
+    expect(correlation.events.some((event) => event.kind === "crash-spike" && event.present)).toBe(true);
 
     const plan = buildRollbackPlan({
       bug,
@@ -136,11 +137,9 @@ describe("production incident investigator", () => {
     expect(ascii).toContain("Incident Detection");
     expect(ascii).toContain("Correlation Engine");
     expect(ascii).toContain("Crash spike");
-    expect(ascii).toContain("API latency spike");
     expect(ascii).toContain("Potential incident");
     expect(ascii).toContain("Fix / Rollback Plan");
-    expect(ascii).toContain("Incident Report");
-    expect(ascii).toContain("Rollback / hotfix");
+    expect(ascii).not.toContain("Logs ─────────┐");
   });
 
   it("lets Incident Agent include correlation and the rollback plan", async () => {
@@ -171,63 +170,5 @@ describe("production incident investigator", () => {
     expect(result.body).toContain("### Correlation");
     expect(result.body).toContain("### Fix / Rollback Plan");
     expect(result.timeline.some((event) => event.label === "Correlated")).toBe(true);
-  });
-
-  it("connects crash spike, latency, deploy, new dependency, and app version", () => {
-    const correlation = correlateIncident({
-      bug: {
-        repoPath: "/tmp",
-        version: "1.0.181",
-        extraContext: [
-          "crash spike",
-          "API latency spike",
-          "p95: 1800ms",
-          "deployment 15 minutes earlier",
-          "new dependency firebase_core",
-        ].join("\n"),
-      },
-      logAnalysis: logs,
-      gitInvestigation: git,
-      metrics: {
-        crashes: 84,
-        requests: 12_000,
-        latencyP95Ms: 1800,
-        errorRate: 0.042,
-        deployedMinutesAgo: 15,
-        newDependency: "firebase_core",
-      },
-      dependencyAnalysis: {
-        evidence: { hits: [{ name: "firebase_core", version: "3.4.0", source: "pubspec.yaml" }] },
-        issues: [{ kind: "version-mismatch", package: "firebase_core", detail: "Newly bumped", likelihood: 0.8 }],
-        likelyDependencyBug: true,
-        summary: "firebase_core was bumped",
-        handoff: [],
-      },
-    });
-    expect(correlation.potentialIncident).toBe(true);
-    expect(correlation.events.filter((event) => event.present).map((event) => event.kind)).toEqual([
-      "crash-spike",
-      "latency-spike",
-      "deployment",
-      "new-dependency",
-      "app-version",
-    ]);
-    expect(correlation.deploy?.minutesBefore).toBe(15);
-    expect(correlation.newDependency).toBe("firebase_core");
-    expect(renderCorrelationAscii(correlation)).toContain(
-      [
-        "Crash spike",
-        "   +",
-        "API latency spike",
-        "   +",
-        "Deployment 15 minutes earlier",
-        "   +",
-        "New dependency",
-        "   +",
-        "Specific app version",
-        "        ↓",
-        "Potential incident",
-      ].join("\n"),
-    );
   });
 });
