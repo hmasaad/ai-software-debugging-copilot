@@ -157,6 +157,7 @@ export interface EvidenceBundle {
   rollbackIntelligence?: RollbackIntelligence;
   incidentTimeline?: IncidentTimeline;
   incidentResponse?: IncidentResponse;
+  knowledgeGraph?: KnowledgeGraph;
 }
 
 export interface ReproductionResult {
@@ -255,6 +256,7 @@ export interface DebuggingReport {
   rollbackIntelligence?: RollbackIntelligence;
   incidentTimeline?: IncidentTimeline;
   incidentResponse?: IncidentResponse;
+  knowledgeGraph?: KnowledgeGraph;
 }
 
 export interface PipelineOptions {
@@ -297,6 +299,7 @@ export type PipelineStage =
   | "validation-agent"
   | "blast-radius"
   | "memory"
+  | "knowledge-graph"
   | "incident-detect"
   | "correlation"
   | "rollback-plan"
@@ -895,6 +898,8 @@ export interface IncidentMemoryEntry {
   resolution: string;
   files: string[];
   fingerprint?: string;
+  commit?: string;
+  components?: string[];
 }
 
 export interface MemoryMatch {
@@ -906,6 +911,27 @@ export interface DebuggingMemory {
   stored: boolean;
   latest?: IncidentMemoryEntry;
   matches: MemoryMatch[];
+  summary: string;
+}
+
+export type KnowledgeGraphKind =
+  | "incident"
+  | "root-cause"
+  | "commit"
+  | "fix"
+  | "affected-components"
+  | "resolution";
+
+export interface KnowledgeGraphNode {
+  kind: KnowledgeGraphKind;
+  label: string;
+  detail: string;
+}
+
+export interface KnowledgeGraph {
+  nodes: KnowledgeGraphNode[];
+  similarCount: number;
+  similar: MemoryMatch[];
   summary: string;
 }
 
@@ -1083,6 +1109,8 @@ export interface EvalDimensions {
   test?: boolean;
   /** True when this case is a false-positive mistake (bad). */
   falsePositive?: boolean;
+  /** True when a human still has to act (approval, toolchain, build, or unfinished fix). */
+  humanIntervention?: boolean;
   iterations?: number;
 }
 
@@ -1103,6 +1131,7 @@ export interface EvalMetrics {
   regressionTestRate: number;
   falsePositiveRate: number;
   avgDebugTimeMs: number;
+  humanInterventionRate: number;
   avgIterations: number;
   caseCount: number;
   passedCount: number;

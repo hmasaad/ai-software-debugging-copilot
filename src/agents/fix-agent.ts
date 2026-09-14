@@ -220,6 +220,14 @@ export function proposeMinimalEdit(input: {
     }
   }
 
+  if (/!\s*;?\s*$/.test(line) && /null/i.test(input.message)) {
+    return {
+      path: input.file,
+      oldString: line,
+      newString: line.replace(/!(\s*;?\s*)$/, "$1"),
+    };
+  }
+
   if (/\.\w+/.test(line) && !/\?\./.test(line) && /undefined|null/i.test(input.message)) {
     const replaced = line.replace(/\.(\w+)(\s*;?\s*)$/, "?.$1$2");
     if (replaced !== line) {

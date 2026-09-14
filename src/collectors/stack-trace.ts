@@ -20,6 +20,18 @@ const SKIP_PATH_HINTS = [
   "node:internal",
   "jest-runner",
   "vitest",
+  "android.os",
+  "android.app",
+  "android.view",
+  "com.android",
+  "dalvik.",
+  "java.lang.",
+  "MessageQueue.java",
+  "Looper.java",
+  "Handler.java",
+  "ActivityThread.java",
+  "Choreographer.java",
+  "io.flutter.embedding",
 ];
 
 export function parseErrorText(raw: string, repoPath?: string): ParsedError {
@@ -150,9 +162,17 @@ export function isProjectFrame(file: string, repoPath?: string): boolean {
   const normalized = file.replace(/\\/g, "/");
   if (SKIP_PATH_HINTS.some((hint) => normalized.includes(hint))) return false;
   if (normalized.startsWith("node:")) return false;
+  if (isAndroidRuntimeFile(normalized)) return false;
   if (!repoPath) return !path.isAbsolute(normalized) || looksLikeSourceFile(normalized);
   const repo = repoPath.replace(/\\/g, "/");
-  return normalized.startsWith(repo) || !path.isAbsolute(file);
+  if (normalized.startsWith(repo)) return true;
+  if (path.isAbsolute(file)) return false;
+  return looksLikeSourceFile(normalized);
+}
+
+function isAndroidRuntimeFile(file: string): boolean {
+  const base = path.basename(file);
+  return /^(MessageQueue|Looper|Handler|ActivityThread|Choreographer|Binder)\.java$/i.test(base);
 }
 
 function extractMessage(text: string, language: ParsedError["language"]): { type?: string; message: string } {

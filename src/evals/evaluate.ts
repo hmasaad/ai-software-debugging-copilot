@@ -136,14 +136,14 @@ export async function evaluateKnownBug(bug: KnownBug): Promise<EvalCaseResult> {
     (bug.gold.trap && classifiedCrash && bug.gold.category !== "runtime-crash") ||
     (classifiedCrash && bug.gold.category !== "runtime-crash" && !bug.gold.expectFix);
 
-  const dimensions: EvalDimensions = {
+  const dimensions: EvalDimensions = withIntervention(bug, {
     rootCause,
     reproduction,
     ...(fix !== undefined ? { fix } : {}),
     ...(test !== undefined ? { test } : {}),
     falsePositive,
     iterations: bug.gold.iterations,
-  };
+  });
 
   const passed =
     rootCause &&
@@ -222,13 +222,18 @@ function evalBlast(bug: KnownBug, started: number): EvalCaseResult {
     Math.round(analysis.workflowShare * 100) === 32 &&
     analysis.low.includes("Media screen") &&
     analysis.usedBy.some((node) => node.name === "SavingsBloc");
-  return finishProbe(bug, started, {
-    rootCause,
-    reproduction: true,
-    test: true,
-    falsePositive: false,
-    iterations: 1,
-  }, analysis.summary);
+  return finishProbe(
+    bug,
+    started,
+    {
+      rootCause,
+      reproduction: true,
+      test: true,
+      falsePositive: false,
+      iterations: 1,
+    },
+    analysis.summary,
+  );
 }
 
 async function evalMemory(bug: KnownBug, started: number): Promise<EvalCaseResult> {
@@ -260,13 +265,18 @@ async function evalMemory(bug: KnownBug, started: number): Promise<EvalCaseResul
       ascii.includes("Previous Incident") &&
       ascii.includes("Store as knowledge") &&
       ascii.includes("Similar historical incidents");
-    return finishProbe(bug, started, {
-      rootCause,
-      reproduction: true,
-      test: true,
-      falsePositive: false,
-      iterations: 1,
-    }, memory.summary);
+    return finishProbe(
+      bug,
+      started,
+      {
+        rootCause,
+        reproduction: true,
+        test: true,
+        falsePositive: false,
+        iterations: 1,
+      },
+      memory.summary,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -285,14 +295,19 @@ function evalAttempts(bug: KnownBug, started: number): EvalCaseResult {
       })
     : undefined;
   const rootCause = log.includes("Attempt 1 → Tests failed") && log.includes("Attempt 3 → Tests passed");
-  return finishProbe(bug, started, {
-    rootCause,
-    reproduction: true,
-    fix: Boolean(edit),
-    test: true,
-    falsePositive: false,
-    iterations: 3,
-  }, log.replace(/\n/g, " · "));
+  return finishProbe(
+    bug,
+    started,
+    {
+      rootCause,
+      reproduction: true,
+      fix: Boolean(edit),
+      test: true,
+      falsePositive: false,
+      iterations: 3,
+    },
+    log.replace(/\n/g, " · "),
+  );
 }
 
 function finishProbe(
@@ -301,12 +316,13 @@ function finishProbe(
   dimensions: EvalDimensions,
   detail: string,
 ): EvalCaseResult {
+  const scored = withIntervention(bug, dimensions);
   const passed =
-    dimensions.rootCause !== false &&
-    dimensions.reproduction !== false &&
-    dimensions.fix !== false &&
-    dimensions.test !== false &&
-    dimensions.falsePositive !== true;
+    scored.rootCause !== false &&
+    scored.reproduction !== false &&
+    scored.fix !== false &&
+    scored.test !== false &&
+    scored.falsePositive !== true;
   return {
     id: bug.id,
     title: bug.title,
@@ -314,6 +330,20 @@ function finishProbe(
     required: bug.required,
     detail,
     durationMs: Date.now() - started,
-    dimensions,
+    dimensions: scored,
   };
+}
+
+function withIntervention(bug: KnownBug, dimensions: EvalDimensions): EvalDimensions {
+  return { ...dimensions, humanIntervention: needsHumanIntervention(bug, dimensions) };
+}
+
+export function needsHumanIntervention(bug: KnownBug, dimensions: EvalDimensions): boolean {
+  if (dimensions.falsePositive) return true;
+  if (bug.gold.expectFix && dimensions.fix === false) return true;
+  if (bug.gold.productionAction === "rollback" || bug.gold.productionAction === "hotfix") return true;
+  if (bug.gold.productionAction === "investigate") return true;
+  if (bug.gold.envMismatch?.length) return true;
+  if (bug.gold.category === "build-failure") return true;
+  return false;
 }

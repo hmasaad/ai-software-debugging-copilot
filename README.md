@@ -402,20 +402,60 @@ Similar historical incidents
 
 Root Cause Agent can rank that historical pattern, and Fix Agent is handed the previous fix as a starting point.
 
-**Evals:** `debug-copilot evals` runs a 100-bug debugging benchmark. Each labeled failure is scored for root-cause accuracy, reproduction, fix correctness, regression-test generation, false positives, time, and iterations, then printed as:
+**Debugging knowledge graph** turns those stored incidents into organizational knowledge. Each investigation is a chain a later crash can reuse:
+
+```
+Incident
+   ↓
+Root Cause
+   ↓
+Commit
+   ↓
+Fix
+   ↓
+Affected Components
+   ↓
+Resolution
+```
+
+When a new error matches stored incidents, the graph reports:
+
+```
+This looks similar to 3 previous incidents.
+```
+
+The chain grows more valuable over time: the next similar crash already knows the introducing commit, the last fix, and which components were affected.
+
+**Evals:** before calling the copilot autonomous, `debug-copilot evals` measures it on 100 labeled bugs:
+
+| Metric | Target |
+|---|---|
+| Root-cause accuracy | >90% |
+| Reproduction success | >85% |
+| Fix success | >80% |
+| Regression-test success | >90% |
+| False root causes | <10% |
+| Mean investigation time | ↓ |
+| Human intervention | ↓ |
+
+Each case is scored for those dimensions, then printed as:
 
 ```
 DEBUGGING COPILOT EVALS
 
-Root Cause Accuracy       91%
-Reproduction Rate         84%
-Fix Success Rate          78%
-Regression Test Rate      93%
-False Positive Rate        7%
-Avg. Debug Time           4m 21s
+Metric                      Measured    Target
+Root-cause accuracy         91%         >90%
+Reproduction success        86%         >85%
+Fix success                 82%         >80%
+Regression-test success     93%         >90%
+False root causes           7%          <10%
+Mean investigation time     4m 21s      ↓
+Human intervention          18%         ↓
+
+Autonomy bar: met
 ```
 
-Live `debug-copilot evals` prints measured rates from those 100 labeled bugs (not hardcoded). The snapshot above is what a longer investigator-backed run can look like.
+Live `debug-copilot evals` prints measured rates from those 100 labeled bugs (not hardcoded). Mean investigation time and human intervention are trend metrics: they should fall as the copilot handles more of the loop without a person. The snapshot above is what a longer investigator-backed run can look like. The autonomy bar fails the command if a percentage target is missed.
 
 Root-cause and fix prompts consume those briefings instead of re-reading raw logs and files from scratch.
 
@@ -538,6 +578,10 @@ npm run board:example
 # or reopen a saved report
 npx tsx src/cli.ts board --json examples/failing-cart/debug-report.json
 
+# Webpage: paste a repo path and stack/ANR dump (no trace file required)
+npx tsx src/cli.ts board
+# then open http://127.0.0.1:8787/new
+
 # Run debugging evals
 npx tsx src/cli.ts evals
 ```
@@ -574,6 +618,10 @@ debug-copilot evals
 ```
 
 After `npm run build`, the binary is `debug-copilot`.
+
+`debug-copilot board` starts the investigation webpage. Paste a local repo path (clone private GitHub repos first) and the Crashlytics / stack / ANR dump — you do not need `--log` or a trace file. The CLI flags still work for the same investigation.
+
+The board opens with a **findings** strip: crash site (`file:line`), introducing commit, root cause, and the next action. Native/external frames (for example `MessageQueue.nativePollOnce`) are folded away from project frames so the dump is usable.
 
 ## Library
 

@@ -7,6 +7,7 @@ import { renderFixRiskAscii } from "../analysis/fix-risk.js";
 import { renderRollbackIntelligenceAscii } from "../analysis/rollback-intelligence.js";
 import { renderIncidentTimelineAscii } from "../analysis/incident-timeline.js";
 import { renderIncidentResponseAscii } from "../analysis/incident-response.js";
+import { renderKnowledgeGraphAscii } from "../analysis/knowledge-graph.js";
 
 export function buildEvidenceBrief(
   input: BugInput,
@@ -245,6 +246,9 @@ export function buildEvidenceBrief(
             .filter(Boolean)
             .join("\n")
         : "",
+      "",
+      `## Debugging knowledge graph`,
+      evidence.knowledgeGraph ? renderKnowledgeGraphAscii(evidence.knowledgeGraph) : "",
       "",
       `## Fix Agent`,
       evidence.fixAnalysis?.summary ?? "",

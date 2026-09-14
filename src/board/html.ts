@@ -19,6 +19,7 @@ import type {
   RollbackIntelligence,
   IncidentTimeline,
   IncidentResponse,
+  KnowledgeGraph,
   SandboxSession,
   SpecialistFindings,
   StackFrame,
@@ -33,6 +34,7 @@ import { renderFixRiskAscii } from "../analysis/fix-risk.js";
 import { renderRollbackIntelligenceAscii } from "../analysis/rollback-intelligence.js";
 import { renderIncidentTimelineAscii } from "../analysis/incident-timeline.js";
 import { renderIncidentResponseAscii } from "../analysis/incident-response.js";
+import { renderKnowledgeGraphAscii } from "../analysis/knowledge-graph.js";
 
 export function renderInvestigationBoard(report: DebuggingReport): string {
   const e = report.evidence;
@@ -146,7 +148,24 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
           },
         ]
       : []),
+    ...(report.knowledgeGraph
+      ? [
+          {
+            id: "knowledge-graph",
+            label: "Knowledge",
+            state: "done" as const,
+            detail: report.knowledgeGraph.summary,
+          },
+        ]
+      : []),
   ];
+
+  const kickerBits = [
+    "Investigation board",
+    report.classification?.subtype,
+    report.production?.source,
+    report.error.language,
+  ].filter((item): item is string => Boolean(item));
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -157,10 +176,12 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
   <style>${BOARD_CSS}</style>
 </head>
 <body>
+  ${boardNav("board")}
   <header class="hero">
-    <div class="kicker">Investigation board</div>
+    <div class="kicker">${esc(kickerBits.join(" · "))}</div>
     <h1>${esc(report.error.type ?? "Error")}: ${esc(clip(report.error.message, 120))}</h1>
     <p class="sub">${esc(shortPath(report.repoPath))} · ${esc(formatTime(report.createdAt))} · ${esc(rca.investigator)}</p>
+    ${findingsStrip(report)}
     <div class="stats">
       ${stat(pct(rca.confidence), "Confidence", rca.confidence >= 0.7 ? "ok" : "warn")}
       ${stat(repro.reproduced ? "Yes" : repro.attempted ? "No" : "—", "Reproduced", repro.reproduced ? "bad" : "ok")}
@@ -200,6 +221,7 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
   ${report.rollbackIntelligence ? rollbackIntelligenceCard(report.rollbackIntelligence) : ""}
   ${report.incidentTimeline ? incidentTimelineCard(report.incidentTimeline) : ""}
   ${report.incidentResponse ? incidentResponseCard(report.incidentResponse) : ""}
+  ${report.knowledgeGraph ? knowledgeGraphCard(report.knowledgeGraph) : ""}
   ${report.memory ? memoryCard(report.memory) : ""}
   ${report.specialists ? specialistsCard(report.specialists) : ""}
 
@@ -558,6 +580,15 @@ function incidentResponseCard(analysis: IncidentResponse): string {
     <p class="lead">${esc(analysis.summary)}</p>
     ${waiting}
     <pre class="ascii">${esc(renderIncidentResponseAscii(analysis))}</pre>
+  </div>`;
+}
+
+function knowledgeGraphCard(graph: KnowledgeGraph): string {
+  return `<div class="card">
+    <h3>Debugging knowledge graph</h3>
+    <p class="meta">Incident → Root Cause → Commit → Fix → Affected Components → Resolution</p>
+    <p class="lead">${esc(graph.summary)}</p>
+    <pre class="ascii">${esc(renderKnowledgeGraphAscii(graph))}</pre>
   </div>`;
 }
 
@@ -941,19 +972,31 @@ function logAnalyzerCard(analysis: LogAnalysis): string {
 
 function stackCard(frames: StackFrame[]): string {
   if (!frames.length) return "";
+  const project = frames.filter((frame) => frame.inProject);
+  const external = frames.filter((frame) => !frame.inProject);
   return `<div class="card">
     <h3>Stack frames</h3>
-    <ol class="frames">
-        ${frames
-          .slice(0, 16)
-          .map((f) => {
-            const loc = `${f.file}${f.line ? `:${f.line}` : ""}${f.column ? `:${f.column}` : ""}`;
-            const fn = f.functionName ? ` — ${esc(f.functionName)}` : "";
-            return `<li class="${f.inProject ? "project" : ""}"><code>${esc(loc)}</code>${fn}<span class="scope">${f.inProject ? "project" : "external"}</span></li>`;
-          })
-          .join("")}
-    </ol>
+    <p class="meta">${project.length} project · ${external.length} native/external</p>
+    ${
+      project.length
+        ? `<ol class="frames">${project.slice(0, 12).map(frameItem).join("")}</ol>`
+        : `<p class="lead">No project frames. Native/external frames are not the Dart/JS crash site.</p>`
+    }
+    ${
+      external.length
+        ? `<details class="frame-fold"${project.length ? "" : " open"}>
+      <summary>Native / external frames (${external.length})</summary>
+      <ol class="frames">${external.slice(0, 16).map(frameItem).join("")}</ol>
+    </details>`
+        : ""
+    }
   </div>`;
+}
+
+function frameItem(frame: StackFrame): string {
+  const loc = `${frame.file}${frame.line ? `:${frame.line}` : ""}${frame.column ? `:${frame.column}` : ""}`;
+  const fn = frame.functionName ? ` — ${esc(frame.functionName)}` : "";
+  return `<li class="${frame.inProject ? "project" : ""}"><code>${esc(loc)}</code>${fn}<span class="scope">${frame.inProject ? "project" : "native/external"}</span></li>`;
 }
 
 function hypothesisCard(h: Hypothesis): string {
@@ -1034,6 +1077,123 @@ function formatTime(iso: string): string {
   return d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
 }
 
+export function boardNav(active: "board" | "new"): string {
+  return `<nav class="topnav" aria-label="Board">
+    <a href="/" class="${active === "board" ? "active" : ""}">Board</a>
+    <a href="/new" class="${active === "new" ? "active" : ""}">New investigation</a>
+    <a href="/report.json">JSON</a>
+  </nav>`;
+}
+
+function findingsStrip(report: DebuggingReport): string {
+  const site = crashSiteOf(report);
+  const commit = introducingCommit(report);
+  const action = nextAction(report);
+  const projectFrames = report.error.frames.filter((frame) => frame.inProject).length;
+  const siteTone = site.project ? "" : " native";
+  return `<div class="findings" aria-label="Precise findings">
+    <article class="finding${siteTone}">
+      <div class="label">Crash site</div>
+      <div class="value"><code>${esc(site.label)}</code></div>
+      <div class="hint">${esc(site.hint)}</div>
+    </article>
+    <article class="finding">
+      <div class="label">Introduced by</div>
+      <div class="value">${esc(commit.label)}</div>
+      <div class="hint">${esc(commit.hint)}</div>
+    </article>
+    <article class="finding">
+      <div class="label">Root cause</div>
+      <div class="value">${esc(clip(report.rootCause.rootCause, 140))}</div>
+      <div class="hint">${projectFrames} project frame${projectFrames === 1 ? "" : "s"} · ${pct(report.rootCause.confidence)}</div>
+    </article>
+    <article class="finding">
+      <div class="label">Next action</div>
+      <div class="value">${esc(action.title)}</div>
+      <div class="hint">${esc(action.detail)}</div>
+    </article>
+  </div>`;
+}
+
+function crashSiteOf(report: DebuggingReport): { label: string; hint: string; project: boolean } {
+  const frame =
+    report.logAnalysis.crashSite ??
+    report.codeInvestigation.origin ??
+    report.error.frames.find((item) => item.inProject) ??
+    report.error.frames[0];
+  if (!frame) {
+    return {
+      label: "unknown",
+      hint: "No stack frames parsed. Paste the full Crashlytics/ANR dump, not only the title.",
+      project: false,
+    };
+  }
+  const loc = `${frame.file}${frame.line ? `:${frame.line}` : ""}`;
+  const fn = frame.functionName ? ` ${frame.functionName}` : "";
+  if (frame.inProject) {
+    return { label: `${loc}${fn}`, hint: "Top project frame — this is the code to inspect.", project: true };
+  }
+  const anr = isAnr(report);
+  return {
+    label: `${loc}${fn}`,
+    hint: anr
+      ? "Native/looper frame. android.os.MessageQueue.nativePollOnce is usually idle wait, not the blocker."
+      : "External/native frame. Expand native/external stacks below for the rest of the dump.",
+    project: false,
+  };
+}
+
+function introducingCommit(report: DebuggingReport): { label: string; hint: string } {
+  const commit = report.gitInvestigation.regression?.commit ?? report.gitInvestigation.introducing;
+  if (!commit) return { label: "not yet identified", hint: "Git investigator did not rank an introducing commit." };
+  const sha = commit.sha.slice(0, 8);
+  const confidence =
+    report.gitInvestigation.regression != null
+      ? `${Math.round(report.gitInvestigation.regression.confidence * 100)}%`
+      : `${Math.round(commit.score * 100)}%`;
+  return {
+    label: `${sha} ${commit.subject}`,
+    hint: `${commit.author} · ${commit.date} · ${confidence}`,
+  };
+}
+
+function nextAction(report: DebuggingReport): { title: string; detail: string } {
+  if (report.incidentResponse?.waiting.length) {
+    return {
+      title: `Approval: ${report.incidentResponse.waiting.join(", ")}`,
+      detail: report.incidentResponse.reason,
+    };
+  }
+  if (report.rollbackIntelligence && !report.rollbackIntelligence.canSafelyPatch) {
+    return {
+      title: report.rollbackIntelligence.target
+        ? `Rollback ${report.rollbackIntelligence.target}`
+        : "Rollback / contain",
+      detail: report.rollbackIntelligence.reason,
+    };
+  }
+  const site = crashSiteOf(report);
+  if (isAnr(report) && !site.project) {
+    return {
+      title: "Need the rest of the ANR dump",
+      detail: "Paste Dart, binder, and plugin threads. nativePollOnce alone cannot name a Flutter root cause.",
+    };
+  }
+  if (report.proposedFix.edits.length && !report.proposedFix.applied) {
+    return { title: "Review proposed patch", detail: report.proposedFix.summary };
+  }
+  if (report.validationAnalysis.resolved) {
+    return { title: "Resolved", detail: report.validationAnalysis.summary };
+  }
+  const follow = report.incidentReport.followUps[0];
+  return { title: follow ?? "Continue investigation", detail: clip(report.rootCause.summary, 160) };
+}
+
+function isAnr(report: DebuggingReport): boolean {
+  if (report.classification?.subtype === "ANR") return true;
+  return /\banr\b|not responding|nativePollOnce/i.test(`${report.error.type ?? ""} ${report.error.message}`);
+}
+
 function esc(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -1042,7 +1202,7 @@ function esc(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-const BOARD_CSS = `
+export const BOARD_CSS = `
   :root {
     --bg: #181818;
     --surface: #222;
@@ -1078,7 +1238,7 @@ const BOARD_CSS = `
   ul, ol { margin: 0; padding-left: 18px; }
   li { margin: 4px 0; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-  .hero, .pipeline, .board, .notes, .logs, .agents, .incident { max-width: 1440px; margin: 0 auto; padding: 20px 24px 0; }
+  .topnav, .hero, .pipeline, .board, .notes, .logs, .agents, .incident, .form-wrap { max-width: 1440px; margin: 0 auto; padding: 20px 24px 0; }
   .logs { padding-bottom: 40px; }
   .kicker { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
   .sub, .meta { color: var(--muted); font-size: 12px; }
@@ -1169,10 +1329,61 @@ const BOARD_CSS = `
   .kv { list-style: none; padding: 0; }
   .kv li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding: 6px 0; }
   .kv span:first-child { color: var(--muted); }
+  .topnav { display: flex; gap: 16px; align-items: center; padding-bottom: 0; }
+  .topnav a { color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 600; }
+  .topnav a.active, .topnav a:hover { color: var(--accent); }
+  .findings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    min-width: 0;
+  }
+  .finding.native { border-color: var(--warn); }
+  .finding .label { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .finding .value { font-weight: 650; margin: 6px 0 4px; overflow-wrap: anywhere; }
+  .finding .hint { color: var(--muted); font-size: 12px; }
+  .frame-fold { margin-top: 10px; }
+  .frame-fold summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .form-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 20px;
+    margin: 16px 0 40px;
+  }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-grid .wide { grid-column: 1 / -1; }
+  label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+  input[type="text"], input[type="number"], select, textarea {
+    width: 100%;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  textarea { min-height: 220px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .checks-row { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+  .checks-row label { font-weight: 500; margin: 0; display: flex; gap: 8px; align-items: center; }
+  button[type="submit"] {
+    background: var(--accent);
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+  button[type="submit"]:disabled { opacity: 0.6; cursor: default; }
+  .status { margin-top: 12px; color: var(--muted); white-space: pre-wrap; }
+  .status.bad { color: var(--bad); }
   @media (max-width: 1100px) {
-    .pipeline, .board { grid-template-columns: 1fr 1fr; }
+    .pipeline, .board, .findings { grid-template-columns: 1fr 1fr; }
   }
   @media (max-width: 720px) {
-    .pipeline, .board { grid-template-columns: 1fr; }
+    .pipeline, .board, .findings, .form-grid { grid-template-columns: 1fr; }
   }
 `;

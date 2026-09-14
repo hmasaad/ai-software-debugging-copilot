@@ -22,6 +22,7 @@ import {
 import { renderRollbackIntelligenceAscii } from "./analysis/rollback-intelligence.js";
 import { renderIncidentTimelineAscii } from "./analysis/incident-timeline.js";
 import { renderIncidentResponseAscii } from "./analysis/incident-response.js";
+import { renderKnowledgeGraphAscii } from "./analysis/knowledge-graph.js";
 import { renderMemoryAscii } from "./analysis/memory.js";
 import { evalsBelowSlo, renderEvalFooter, runEvalSuite } from "./evals/run.js";
 import { renderSpecialistsAscii } from "./agents/specialists.js";
@@ -37,13 +38,13 @@ Investigate a bug like an engineer: classify the failure, collect evidence,
 reproduce, rank root causes, patch, run tests, and verify — iterating when
 tests fail. \`incident\` runs the production investigator: detect, correlate
 logs/crashes/metrics, rank root cause, blast radius, regression, rollback intelligence,
-incident timeline, autonomous response with approval gates, validate, and write the incident report.
+incident timeline, autonomous response with approval gates, a debugging knowledge graph of similar incidents, validate, and write the incident report.
 
 Commands:
   debug-copilot [options]     Investigate a bug
   debug-copilot incident      Investigate a production incident automatically
-  debug-copilot board         Open the last investigation board
-  debug-copilot evals         Run the 100-bug debugging benchmark
+  debug-copilot board         Open the investigation webpage (paste repo + trace, or view a report)
+  debug-copilot evals         Run the 100-bug debugging benchmark (autonomy bar)
 
 With --autonomous the agent works in an isolated git worktree: inspect,
 search, git history, reproduce, patch, re-test, inspect the diff, and revert
@@ -136,9 +137,9 @@ async function main(argv: string[]): Promise<void> {
   }
 
   if (positionals[0] === "board") {
-    const jsonPath = values.json ?? "debug-report.json";
-    const report = await loadReport(jsonPath);
-    await serveInvestigationBoard(report, { port, open });
+    const jsonPath = values.json;
+    const report = jsonPath ? await loadReport(jsonPath) : await tryLoadReport("debug-report.json");
+    await serveInvestigationBoard(report, { port, open, live: true });
     return;
   }
 
@@ -240,6 +241,9 @@ async function main(argv: string[]): Promise<void> {
   if (report.memory) {
     process.stderr.write(`\n${renderMemoryAscii(report.memory)}\n`);
   }
+  if (report.knowledgeGraph) {
+    process.stderr.write(`\n${renderKnowledgeGraphAscii(report.knowledgeGraph)}\n`);
+  }
   if (values.report) process.stderr.write(`Report: ${values.report}\n`);
   if (jsonPath) process.stderr.write(`JSON: ${jsonPath}\n`);
 
@@ -253,7 +257,7 @@ async function main(argv: string[]): Promise<void> {
   }
 
   if (values.board) {
-    await serveInvestigationBoard(report, { port, open });
+    await serveInvestigationBoard(report, { port, open, live: true });
   }
 }
 
@@ -263,6 +267,14 @@ async function loadReport(jsonPath: string): Promise<DebuggingReport> {
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`Could not load investigation JSON at ${jsonPath}: ${reason}`);
+  }
+}
+
+async function tryLoadReport(jsonPath: string): Promise<DebuggingReport | undefined> {
+  try {
+    return JSON.parse(await readFile(jsonPath, "utf8")) as DebuggingReport;
+  } catch {
+    return undefined;
   }
 }
 

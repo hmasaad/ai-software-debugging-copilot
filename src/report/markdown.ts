@@ -8,6 +8,7 @@ import { renderFixRiskAscii } from "../analysis/fix-risk.js";
 import { renderRollbackIntelligenceAscii } from "../analysis/rollback-intelligence.js";
 import { renderIncidentTimelineAscii } from "../analysis/incident-timeline.js";
 import { renderIncidentResponseAscii } from "../analysis/incident-response.js";
+import { renderKnowledgeGraphAscii } from "../analysis/knowledge-graph.js";
 import { renderMemoryAscii } from "../analysis/memory.js";
 import { renderFirstBadVersionAscii } from "../analysis/first-bad-version.js";
 import { renderGitBisectAscii } from "../analysis/git-bisect.js";
@@ -121,6 +122,10 @@ export function renderMarkdownReport(report: DebuggingReport): string {
       : "",
     "",
     report.memory ? `## Debugging memory\n\n${renderMemoryAscii(report.memory)}` : "",
+    "",
+    report.knowledgeGraph
+      ? `## Debugging knowledge graph\n\n${renderKnowledgeGraphAscii(report.knowledgeGraph)}`
+      : "",
     "",
     report.productionInvestigation
       ? `## Production incident investigator\n\n${renderProductionInvestigatorAscii(report.productionInvestigation)}`

@@ -40,6 +40,8 @@ export { renderMarkdownReport } from "./report/markdown.js";
 export { renderDebugResult } from "./report/result.js";
 export { renderInvestigationBoard } from "./board/html.js";
 export { serveInvestigationBoard, startBoardServer } from "./board/serve.js";
+export { resolveInvestigationRepo, parseGithubUrl } from "./board/repo.js";
+export { renderInvestigateForm } from "./board/form.js";
 export { createInvestigator, HeuristicInvestigator } from "./llm/index.js";
 export { applyEdits } from "./analysis/patch.js";
 export { buildEvidenceGraph, renderEvidenceGraphAscii } from "./analysis/evidence-graph.js";
@@ -79,6 +81,12 @@ export {
   INCIDENT_RESPONSE_FLOW,
   INCIDENT_RESPONSE_GATES,
 } from "./analysis/incident-response.js";
+export {
+  buildKnowledgeGraph,
+  renderKnowledgeGraphAscii,
+  similarIncidentsLine,
+  KNOWLEDGE_GRAPH_FLOW,
+} from "./analysis/knowledge-graph.js";
 export { recallIncidents, rememberIncident, renderMemoryAscii } from "./analysis/memory.js";
 export {
   buildProductionIncident,
@@ -98,7 +106,7 @@ export {
   renderCorrelationAscii,
   PRODUCTION_INVESTIGATOR_FLOW,
 } from "./analysis/incident-investigator.js";
-export { runEvalSuite, renderEvalDashboard, renderEvalFooter, evalsBelowSlo } from "./evals/run.js";
+export { runEvalSuite, renderEvalDashboard, renderEvalFooter, evalsBelowSlo, evalsMeetTargets, EVAL_TARGETS } from "./evals/run.js";
 export { KNOWN_BUGS, buildKnownBugs } from "./evals/dataset.js";
 export type {
   BugInput,
@@ -137,6 +145,8 @@ export type {
   IncidentTimeline,
   IncidentResponse,
   IncidentResponseAction,
+  KnowledgeGraph,
+  KnowledgeGraphNode,
   IncidentCorrelation,
   CorrelationEvent,
   EvalRun,

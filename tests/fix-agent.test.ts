@@ -42,6 +42,20 @@ describe("Fix Agent", () => {
     expect(edit?.newString).toBe("return item.price * (item.qty ?? 1);");
   });
 
+  it("removes a Dart null-check bang on a null value", () => {
+    const edit = proposeMinimalEdit({
+      file: "lib/savings/savings_bloc.dart",
+      fileContent: "dynamic load() {\n  return response.data!;\n}\n",
+      expression: "return response.data!;",
+      message: "Null check operator used on a null value",
+    });
+    expect(edit).toEqual({
+      path: "lib/savings/savings_bloc.dart",
+      oldString: "return response.data!;",
+      newString: "return response.data;",
+    });
+  });
+
   it("skips application patches for a dependency root cause", async () => {
     const agent = new FixAgent();
     const { result } = await agent.run({

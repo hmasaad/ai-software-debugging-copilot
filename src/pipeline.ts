@@ -9,6 +9,7 @@ import { detectIncident, investigateProductionIncident } from "./analysis/incide
 import { buildRollbackIntelligence, canSafelyPatch } from "./analysis/rollback-intelligence.js";
 import { buildIncidentTimeline } from "./analysis/incident-timeline.js";
 import { buildIncidentResponse, looksLikeDataMutation } from "./analysis/incident-response.js";
+import { buildKnowledgeGraph, collectComponents, commitLabel } from "./analysis/knowledge-graph.js";
 import { createInvestigator } from "./llm/index.js";
 import { LogAnalyzerAgent } from "./agents/log-analyzer.js";
 import { ClassifierAgent } from "./agents/classifier-agent.js";
@@ -406,6 +407,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     stage: "memory",
     message: "Store this incident as knowledge...",
   });
+  const storedCommit = commitLabel(gitInvestigation);
   memory = await rememberIncident({
     repoPath,
     errorType: evidence.error.type,
@@ -415,8 +417,28 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     fix: last.fix.summary,
     resolution: lastValidationAnalysis.summary,
     files: last.rootCause.affectedFiles,
+    commit: storedCommit === "not yet identified" ? undefined : storedCommit,
+    components: collectComponents({
+      blastRadius,
+      files: last.rootCause.affectedFiles,
+    }),
   });
   evidence.memory = memory;
+
+  emit({
+    stage: "knowledge-graph",
+    message: "Previous incidents become organizational knowledge...",
+  });
+  const knowledgeGraph = buildKnowledgeGraph({
+    error: evidence.error,
+    rootCause: last.rootCause,
+    gitInvestigation,
+    blastRadius,
+    fix: last.fix,
+    validation: lastValidationAnalysis,
+    memory,
+  });
+  evidence.knowledgeGraph = knowledgeGraph;
 
   const productionMode = Boolean(
     productionHint.version ||
@@ -551,6 +573,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   }
   if (environment.mismatches.length) notes.push(environment.summary);
   if (memory.matches.length) notes.push(memory.summary);
+  if (knowledgeGraph.similarCount) notes.push(knowledgeGraph.summary);
   if (rollbackIntelligence.action !== "patch") {
     notes.push(rollbackIntelligence.summary);
   }
@@ -590,6 +613,7 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     rollbackIntelligence,
     incidentTimeline,
     incidentResponse,
+    knowledgeGraph,
     ...(productionInvestigation ? { productionInvestigation } : {}),
   };
 

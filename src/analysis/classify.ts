@@ -41,19 +41,19 @@ const RULES: ClassifyRule[] = [
     signal: "database",
   },
   {
-    test: /dioexception|\bdio\b|socketexception|econnrefused|enotfound|http[s]?:\/\/|status code|xmlhttprequest|\bapi\b|firebase/i,
-    family: "runtime",
-    category: "api-backend-issue",
-    confidence: 0.8,
-    signal: "network",
-  },
-  {
-    test: /\banr\b|application not responding/i,
+    test: /\banr\b|application not responding|nativePollOnce/i,
     family: "runtime",
     category: "performance-issue",
     subtype: "ANR",
     confidence: 0.88,
     signal: "anr",
+  },
+  {
+    test: /dioexception|\bdio\b|socketexception|econnrefused|enotfound|http[s]?:\/\/|status code|xmlhttprequest|\bapi\b|firebase/i,
+    family: "runtime",
+    category: "api-backend-issue",
+    confidence: 0.8,
+    signal: "network",
   },
   {
     test: /jank|skipped \d+ frames|slow frame|performance/i,

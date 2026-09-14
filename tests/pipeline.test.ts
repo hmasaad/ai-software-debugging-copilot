@@ -126,6 +126,14 @@ describe("debugBug pipeline", () => {
     expect(report.incidentResponse?.path).toBe("fix");
     expect(report.incidentResponse?.stage).toBe("RESOLVED");
     expect(report.incidentResponse?.waiting).toEqual([]);
+    expect(report.knowledgeGraph?.nodes.map((node) => node.label)).toEqual([
+      "Incident",
+      "Root Cause",
+      "Commit",
+      "Fix",
+      "Affected Components",
+      "Resolution",
+    ]);
     expect(report.verification.passed).toBe(true);
     expect(report.classification?.category).toBeTruthy();
     expect(report.iterations[0]?.summary).toMatch(/Attempt 1 → Tests passed/);
@@ -150,6 +158,9 @@ describe("debugBug pipeline", () => {
     expect(markdown).toContain("Risk: LOW");
     expect(markdown).toContain("Read logs                 AUTO");
     expect(markdown).toContain("Deploy                    APPROVAL");
+    expect(markdown).toContain("Debugging knowledge graph");
+    expect(markdown).toContain("Incident");
+    expect(markdown).toContain("Affected Components");
     expect(await readFile(path.join(fixture.dir, "debug-report.md"), "utf8")).toContain("Debugging report");
   });
 

@@ -43,6 +43,13 @@ describe("Failure Classifier", () => {
     expect(anr.subtype).toBe("ANR");
     expect(anr.category).toBe("performance-issue");
 
+    const crashlytics = classifyFailure({
+      message: "ANR: Native method android.os.MessageQueue.nativePollOnce. Root cause for this ANR is unknown.",
+      extraContext: "source: crashlytics firebase",
+    });
+    expect(crashlytics.subtype).toBe("ANR");
+    expect(crashlytics.category).toBe("performance-issue");
+
     const state = classifyFailure({ message: "SavingsBloc emitted the wrong state after LoadMedia" });
     expect(state.family).toBe("logic");
     expect(state.subtype).toBe("Wrong state");

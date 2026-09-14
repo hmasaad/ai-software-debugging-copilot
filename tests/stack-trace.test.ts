@@ -77,4 +77,15 @@ SavingsMemberMediaBloc.dart:217`);
       true,
     );
   });
+
+  it("does not treat Android MessageQueue frames as project code", () => {
+    const parsed = parseErrorText(
+      `ANR: Native method android.os.MessageQueue.nativePollOnce
+	at android.os.MessageQueue.nativePollOnce(MessageQueue.java:342)
+	at android.os.MessageQueue.next(MessageQueue.java:221)`,
+      "/repo/salt_flutter_app",
+    );
+    expect(parsed.frames.length).toBeGreaterThan(0);
+    expect(parsed.frames.every((frame) => frame.inProject === false)).toBe(true);
+  });
 });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { renderInvestigateForm } from "../src/board/form.js";
 import { renderInvestigationBoard } from "../src/board/html.js";
+import { parseGithubUrl, resolveInvestigationRepo } from "../src/board/repo.js";
 import { startBoardServer } from "../src/board/serve.js";
 import type { DebuggingReport } from "../src/types.js";
 
@@ -418,12 +420,33 @@ const report: DebuggingReport = {
     reason: "327 users after a known-bad deploy. Do not ship a code patch first.",
     summary: "Autonomous response: Rollback path at Rollback. Waiting for approval: Rollback production.",
   },
+  knowledgeGraph: {
+    nodes: [
+      { kind: "incident", label: "Incident", detail: "TypeError: Cannot read properties of undefined (reading 'id')" },
+      { kind: "root-cause", label: "Root Cause", detail: "unguarded item.id access" },
+      { kind: "commit", label: "Commit", detail: "abc1234 Firebase initialization change" },
+      { kind: "fix", label: "Fix", detail: "optional chain" },
+      { kind: "affected-components", label: "Affected Components", detail: "cart" },
+      { kind: "resolution", label: "Resolution", detail: "resolved" },
+    ],
+    similarCount: 3,
+    similar: [],
+    summary: "This looks similar to 3 previous incidents.",
+  },
 };
 
 describe("investigation board", () => {
   it("renders every investigation column from a report", () => {
     const html = renderInvestigationBoard(report);
     expect(html).toContain("Investigation board");
+    expect(html).toContain("New investigation");
+    expect(html).toContain("Crash site");
+    expect(html).toContain("Introduced by");
+    expect(html).toContain("Next action");
+    expect(html).toContain("src/cart.js:16");
+    expect(html).toContain("deadbeef");
+    expect(html).toContain("Approval: Rollback production");
+    expect(html).toContain("project");
     expect(html).toContain("TypeError");
     expect(html).toContain("getPrimaryItemId");
     expect(html).toContain("src/cart.js:16");
@@ -456,6 +479,9 @@ describe("investigation board", () => {
     expect(html).toContain("Read logs                 AUTO");
     expect(html).toContain("Deploy                    APPROVAL");
     expect(html).toContain("Rollback production       APPROVAL");
+    expect(html).toContain("Debugging knowledge graph");
+    expect(html).toContain("This looks similar to 3 previous incidents.");
+    expect(html).toContain("Affected Components");
     expect(html).toContain("Test Agent");
     expect(html).toContain("Validation Agent");
     expect(html).toContain("Incident Agent");
@@ -473,12 +499,56 @@ describe("investigation board", () => {
       const html = await page.text();
       expect(page.status).toBe(200);
       expect(html).toContain("Investigation board");
+      expect(html).toContain("Crash site");
 
       const json = await fetch(`${board.url}/report.json`);
       const body = (await json.json()) as DebuggingReport;
       expect(body.rootCause.confidence).toBe(0.8);
+
+      const form = await fetch(`${board.url}/new`);
+      const formHtml = await form.text();
+      expect(formHtml).toContain("Investigate a bug");
+      expect(formHtml).toContain("Repo path or GitHub URL");
+      expect(formHtml).toContain("Stack trace / ANR dump / log text");
     } finally {
       await board.close();
     }
+  });
+
+  it("accepts a pasted dump from the webpage without a trace file", async () => {
+    const board = await startBoardServer(undefined, { port: 0, live: true });
+    try {
+      const home = await fetch(board.url);
+      expect(await home.text()).toContain("Investigate a bug");
+
+      const missing = await fetch(`${board.url}/investigate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ error: "ANR nativePollOnce" }),
+      });
+      expect(missing.status).toBe(400);
+      expect(await missing.text()).toContain("Repo path");
+
+      const missingDump = await fetch(`${board.url}/investigate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ repo: "/tmp/does-not-exist-debug-copilot" }),
+      });
+      expect(missingDump.status).toBe(400);
+      expect(await missingDump.text()).toContain("stack");
+    } finally {
+      await board.close();
+    }
+  });
+
+  it("renders the webpage form and resolves a local repo path", async () => {
+    expect(renderInvestigateForm()).toContain("Repo path or GitHub URL");
+    expect(parseGithubUrl("https://github.com/Christian-Aid-Ministries/salt_flutter_app")).toBe(
+      "https://github.com/Christian-Aid-Ministries/salt_flutter_app.git",
+    );
+    expect(parseGithubUrl("git@github.com:org/app.git")).toBe("https://github.com/org/app.git");
+    const resolved = await resolveInvestigationRepo(process.cwd());
+    expect(resolved.source).toBe("local");
+    expect(resolved.repoPath).toBe(process.cwd());
   });
 });

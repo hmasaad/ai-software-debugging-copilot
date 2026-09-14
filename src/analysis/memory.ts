@@ -64,6 +64,8 @@ export async function rememberIncident(input: {
   fix: string;
   resolution: string;
   files?: string[];
+  commit?: string;
+  components?: string[];
 }): Promise<DebuggingMemory> {
   const previous = await recallIncidents(input);
   const incidents = await loadMemory(input.repoPath);
@@ -78,6 +80,8 @@ export async function rememberIncident(input: {
     resolution: input.resolution.slice(0, 240),
     files: (input.files ?? []).slice(0, 8),
     fingerprint: incidentFingerprint(input),
+    ...(input.commit ? { commit: input.commit.slice(0, 120) } : {}),
+    ...(input.components?.length ? { components: input.components.slice(0, 8) } : {}),
   };
   incidents.unshift(entry);
   const dir = path.join(input.repoPath, MEMORY_DIR);

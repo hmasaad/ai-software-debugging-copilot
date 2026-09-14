@@ -1,7 +1,11 @@
-import { createServer, type Server } from "node:http";
-import { renderInvestigationBoard } from "./html.js";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { debugAutonomously } from "../autonomous/debug.js";
+import { debugBug } from "../pipeline.js";
 import { tryCommand } from "../exec.js";
-import type { DebuggingReport } from "../types.js";
+import type { BugInput, DebuggingReport, InvestigatorKind } from "../types.js";
+import { renderInvestigateForm } from "./form.js";
+import { renderInvestigationBoard } from "./html.js";
+import { resolveInvestigationRepo } from "./repo.js";
 
 export interface BoardServer {
   url: string;
@@ -9,30 +13,97 @@ export interface BoardServer {
   close: () => Promise<void>;
 }
 
+export interface BoardServerOptions {
+  port?: number;
+  host?: string;
+  live?: boolean;
+}
+
+interface InvestigateRequest {
+  repo?: string;
+  error?: string;
+  trace?: string;
+  source?: string;
+  version?: string;
+  affectedUsers?: number;
+  firstSeen?: string;
+  investigator?: string;
+  runTests?: boolean;
+  apply?: boolean;
+  autonomous?: boolean;
+}
+
 export async function startBoardServer(
-  report: DebuggingReport,
-  options: { port?: number; host?: string } = {},
+  report?: DebuggingReport,
+  options: BoardServerOptions = {},
 ): Promise<BoardServer> {
   const host = options.host ?? "127.0.0.1";
   const requested = options.port ?? 8787;
-  const html = renderInvestigationBoard(report);
-  const json = JSON.stringify(report);
+  const live = options.live !== false;
+  let current = report;
+  let busy = false;
 
   const server: Server = createServer((req, res) => {
-    const url = req.url?.split("?")[0] ?? "/";
-    if (url === "/" || url === "/index.html" || url === "/board") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      res.end(html);
-      return;
-    }
-    if (url === "/report.json") {
-      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      res.end(json);
-      return;
-    }
-    res.writeHead(404, { "content-type": "text/plain" });
-    res.end("Not found");
+    void handle(req, res);
   });
+
+  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = req.url?.split("?")[0] ?? "/";
+    try {
+      if (req.method === "GET" && (url === "/" || url === "/index.html" || url === "/board")) {
+        if (!current) {
+          html(res, 200, renderInvestigateForm());
+          return;
+        }
+        html(res, 200, renderInvestigationBoard(current));
+        return;
+      }
+      if (req.method === "GET" && url === "/new") {
+        html(res, 200, renderInvestigateForm({ repo: current?.repoPath }));
+        return;
+      }
+      if (req.method === "GET" && url === "/report.json") {
+        if (!current) {
+          json(res, 404, { error: "No investigation yet. POST /investigate or open /new." });
+          return;
+        }
+        json(res, 200, current);
+        return;
+      }
+      if (req.method === "POST" && url === "/investigate") {
+        if (!live) {
+          json(res, 405, { error: "This board is report-only. Restart with debug-copilot board to investigate from the webpage." });
+          return;
+        }
+        if (busy) {
+          json(res, 409, { error: "An investigation is already running." });
+          return;
+        }
+        const body = parseInvestigate(await readBody(req));
+        if (!body.repo?.trim()) {
+          json(res, 400, { error: "Repo path or GitHub URL is required." });
+          return;
+        }
+        if (!body.error?.trim() && !body.trace?.trim()) {
+          json(res, 400, { error: "Paste an error title and/or the stack / ANR / log dump." });
+          return;
+        }
+        busy = true;
+        try {
+          current = await runInvestigation(body);
+          json(res, 200, { ok: true });
+        } finally {
+          busy = false;
+        }
+        return;
+      }
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      res.end("Not found");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      json(res, 500, { error: message });
+    }
+  }
 
   const port = await listen(server, host, requested);
   return {
@@ -46,13 +117,14 @@ export async function startBoardServer(
 }
 
 export async function serveInvestigationBoard(
-  report: DebuggingReport,
-  options: { port?: number; open?: boolean } = {},
+  report?: DebuggingReport,
+  options: { port?: number; open?: boolean; live?: boolean } = {},
 ): Promise<void> {
-  const board = await startBoardServer(report, { port: options.port });
+  const board = await startBoardServer(report, { port: options.port, live: options.live });
   process.stderr.write(`Investigation board: ${board.url}\n`);
+  process.stderr.write(`New investigation: ${board.url}/new\n`);
   if (options.open !== false) {
-    await openBrowser(board.url);
+    await openBrowser(report ? board.url : `${board.url}/new`);
   }
   await new Promise<void>((resolve) => {
     const stop = () => {
@@ -60,6 +132,87 @@ export async function serveInvestigationBoard(
     };
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
+  });
+}
+
+async function runInvestigation(body: InvestigateRequest): Promise<DebuggingReport> {
+  const resolved = await resolveInvestigationRepo(body.repo ?? "");
+  const source = asSource(body.source);
+  const investigator = asInvestigator(body.investigator);
+  const bug: BugInput = {
+    repoPath: resolved.repoPath,
+    message: body.error?.trim() || undefined,
+    stackTrace: body.trace?.trim() || undefined,
+    logText: body.trace?.trim() || undefined,
+    version: body.version?.trim() || undefined,
+    affectedUsers: Number.isFinite(body.affectedUsers) ? body.affectedUsers : undefined,
+    firstSeen: body.firstSeen?.trim() || undefined,
+    incidentSource: source,
+  };
+  const pipeline = {
+    repoPath: resolved.repoPath,
+    apply: Boolean(body.apply),
+    autonomous: Boolean(body.autonomous),
+    runTests: Boolean(body.runTests),
+    investigator,
+    onEvent: (event: { agent?: string; stage: string; message: string }) => {
+      const label = event.agent ?? event.stage;
+      process.stderr.write(`[board ${label}] ${event.message}\n`);
+    },
+  };
+  const report = body.autonomous
+    ? (await debugAutonomously(bug, pipeline)).report
+    : await debugBug(bug, pipeline);
+  if (resolved.warning) report.notes.push(resolved.warning);
+  if (resolved.source === "clone") {
+    report.notes.push(`Cloned ${body.repo} into ${resolved.repoPath} for this investigation.`);
+  }
+  return report;
+}
+
+function parseInvestigate(raw: string): InvestigateRequest {
+  if (!raw.trim()) return {};
+  const parsed = JSON.parse(raw) as InvestigateRequest;
+  return parsed && typeof parsed === "object" ? parsed : {};
+}
+
+function asSource(value?: string): BugInput["incidentSource"] {
+  if (value === "crashlytics" || value === "sentry" || value === "logs") return value;
+  return undefined;
+}
+
+function asInvestigator(value?: string): InvestigatorKind | undefined {
+  if (value === "auto" || value === "heuristic" || value === "openai" || value === "anthropic" || value === "cursor") {
+    return value;
+  }
+  return undefined;
+}
+
+function html(res: ServerResponse, status: number, body: string): void {
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  res.end(body);
+}
+
+function json(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  res.end(JSON.stringify(body));
+}
+
+function readBody(req: IncomingMessage, limit = 2_000_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > limit) {
+        req.destroy();
+        reject(new Error("Dump is larger than 2MB. Trim the ANR file to the relevant threads."));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
   });
 }
 
