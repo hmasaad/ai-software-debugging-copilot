@@ -1,10 +1,15 @@
+import { displayVersion, investigateFirstBadVersion } from "../analysis/first-bad-version.js";
+import { runGitBisect } from "../analysis/git-bisect.js";
 import { buildGitRegression, crashFileOverlap, matchListedPullRequest, parsePrNumber } from "../analysis/git-regression.js";
+import { parseProductionSignals } from "../analysis/production.js";
 import { collectGitEvidence, listCommitFiles, showCommitDiff } from "../collectors/git.js";
 import { collectPullRequests, findPullRequestForCommit, inspectPullRequest } from "../collectors/github.js";
 import { tryCommand } from "../exec.js";
 import type {
   AgentRun,
   CodeInvestigation,
+  FirstBadVersion,
+  GitBisect,
   GitCommit,
   GitInvestigation,
   GitSuspect,
@@ -51,11 +56,34 @@ export class GitInvestigatorAgent implements SpecialistAgent<GitInvestigation> {
       collectPickaxe(ctx.input.repoPath, ctx.codeInvestigation?.suspects ?? []),
     ]);
 
+    const extraContext = [ctx.input.extraContext, ctx.input.logText, ctx.input.message].filter(Boolean).join("\n");
+    const version = ctx.input.version ?? parseProductionSignals(extraContext).version;
+    const firstBadVersion = await investigateFirstBadVersion({
+      repoPath: ctx.input.repoPath,
+      version,
+      extraContext,
+    });
+    const bisect =
+      firstBadVersion?.fromRef && firstBadVersion.toRef
+        ? await runGitBisect({
+            repoPath: ctx.input.repoPath,
+            goodRef: firstBadVersion.fromRef,
+            badRef: firstBadVersion.toRef,
+            commits: firstBadVersion.commits,
+            crashFiles,
+            suspects: ctx.codeInvestigation?.suspects,
+            testCommand: ctx.runTests === false ? undefined : ctx.evidence?.tests.testCommand,
+          })
+        : undefined;
+
     const suspects = rankGitSuspects({
       blame: evidence.blame,
       commits: evidence.commitsTouchingSuspects.concat(evidence.recentCommits),
       pickaxe,
       pullRequests: listedPrs,
+      windowCommits: firstBadVersion?.commits,
+      windowLabel: firstBadWindowLabel(firstBadVersion),
+      bisectCommit: bisect?.firstBad,
     });
     const introducing = suspects[0];
 
@@ -86,10 +114,10 @@ export class GitInvestigatorAgent implements SpecialistAgent<GitInvestigation> {
       });
     }
 
-    const summary = buildGitSummary(evidence, introducing, regression);
-    const handoff = buildGitHandoff(introducing, regression, evidence);
+    const summary = buildGitSummary(evidence, introducing, regression, firstBadVersion, bisect);
+    const handoff = buildGitHandoff(introducing, regression, evidence, firstBadVersion, bisect);
 
-    return { evidence, pullRequests, suspects, introducing, regression, summary, handoff };
+    return { evidence, pullRequests, suspects, introducing, regression, firstBadVersion, bisect, summary, handoff };
   }
 }
 
@@ -98,6 +126,9 @@ export function rankGitSuspects(input: {
   commits: GitCommit[];
   pickaxe: GitCommit[];
   pullRequests: PullRequestEvidence[];
+  windowCommits?: GitCommit[];
+  windowLabel?: string;
+  bisectCommit?: GitCommit;
 }): GitSuspect[] {
   const scores = new Map<string, GitSuspect>();
 
@@ -139,6 +170,14 @@ export function rankGitSuspects(input: {
     if (/(fix|bug|crash|null|undefined|npe|regress)/i.test(commit.subject)) {
       bump(commit, 0.15, `subject mentions ${commit.subject}`);
     }
+  }
+
+  const windowLabel = input.windowLabel ?? "last healthy → first bad";
+  for (const commit of input.windowCommits ?? []) {
+    bump(commit, 0.5, `in first-bad version window (${windowLabel})`);
+  }
+  if (input.bisectCommit) {
+    bump(input.bisectCommit, 1.0, "git bisect first bad commit");
   }
 
   const prFiles = new Set(input.pullRequests.flatMap((pr) => pr.files ?? []));
@@ -234,21 +273,37 @@ function buildGitSummary(
   evidence: GitInvestigation["evidence"],
   introducing: GitSuspect | undefined,
   regression: GitInvestigation["regression"],
+  firstBad?: FirstBadVersion,
+  bisect?: GitBisect,
 ): string {
-  if (!evidence.available) return "Not a git repository; cannot attribute an introducing commit.";
-  if (regression) return regression.summary;
-  if (introducing) {
-    return `Likely introduced by ${introducing.sha.slice(0, 8)} (${introducing.author}, ${introducing.date}): ${introducing.subject}.`;
-  }
-  return `Git history available on ${evidence.branch ?? "HEAD"}; no strong introducing commit ranked.`;
+  const gitSummary = !evidence.available
+    ? "Not a git repository; cannot attribute an introducing commit."
+    : regression
+      ? regression.summary
+      : introducing
+        ? `Likely introduced by ${introducing.sha.slice(0, 8)} (${introducing.author}, ${introducing.date}): ${introducing.subject}.`
+        : `Git history available on ${evidence.branch ?? "HEAD"}; no strong introducing commit ranked.`;
+  return [firstBad?.summary, bisect?.summary, gitSummary].filter(Boolean).join(" ");
 }
 
 function buildGitHandoff(
   introducing: GitSuspect | undefined,
   regression: GitInvestigation["regression"],
   evidence: GitInvestigation["evidence"],
+  firstBad?: FirstBadVersion,
+  bisect?: GitBisect,
 ): string[] {
   const notes: string[] = [];
+  if (bisect?.firstBad) {
+    notes.push(
+      `Git bisect isolated ${bisect.firstBad.sha.slice(0, 8)} after ${bisect.testsRun} test${bisect.testsRun === 1 ? "" : "s"} (${bisect.method}).`,
+    );
+  }
+  if (firstBad?.lastHealthy) {
+    notes.push(
+      `Investigate the ${firstBad.commitCount} commits between ${displayVersion(firstBad.lastHealthy)} and ${displayVersion(firstBad.firstBad)}.`,
+    );
+  }
   if (introducing) {
     notes.push(`Inspect commit ${introducing.sha.slice(0, 8)} — ${introducing.subject} (${introducing.reasons.join("; ")}).`);
   }
@@ -262,4 +317,9 @@ function buildGitHandoff(
     notes.push(`Blame on crash line: ${b.file}:${b.line} last touched by ${b.author} in ${b.sha}.`);
   }
   return notes;
+}
+
+function firstBadWindowLabel(firstBad?: FirstBadVersion): string | undefined {
+  if (!firstBad?.lastHealthy) return undefined;
+  return `${displayVersion(firstBad.lastHealthy)} → ${displayVersion(firstBad.firstBad)}`;
 }

@@ -216,7 +216,10 @@ function evalBlast(bug: KnownBug, started: number): EvalCaseResult {
   const rootCause =
     analysis.high.includes("Savings screen") &&
     analysis.high.includes("Savings reports") &&
-    analysis.high.includes("Shareout calculation") &&
+    analysis.high.includes("Shareout") &&
+    analysis.direct.includes("Savings screen") &&
+    analysis.indirect.includes("Member details") &&
+    Math.round(analysis.workflowShare * 100) === 32 &&
     analysis.low.includes("Media screen") &&
     analysis.usedBy.some((node) => node.name === "SavingsBloc");
   return finishProbe(bug, started, {

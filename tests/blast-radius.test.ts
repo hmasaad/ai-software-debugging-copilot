@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBlastRadius, renderBlastRadiusAscii } from "../src/analysis/blast-radius.js";
+import { BLAST_RADIUS_FLOW, buildBlastRadius, renderBlastRadiusAscii } from "../src/analysis/blast-radius.js";
 import type { CodeInvestigation } from "../src/types.js";
 
 const savings: CodeInvestigation = {
@@ -25,9 +25,9 @@ const savings: CodeInvestigation = {
 };
 
 describe("blast-radius analysis", () => {
-  it("asks what else the change could break and ranks HIGH vs LOW surfaces", () => {
+  it("walks function → users and ranks the savings blast radius as HIGH", () => {
     const analysis = buildBlastRadius({ codeInvestigation: savings });
-    expect(analysis.question).toBe("What else could this change break?");
+    expect(analysis.question).toBe("What else could this affect?");
     expect(analysis.origin).toBe("SavingsRepository");
     expect(analysis.usedBy.map((node) => node.name)).toEqual([
       "SavingsBloc",
@@ -36,31 +36,58 @@ describe("blast-radius analysis", () => {
       "ShareoutBloc",
       "MediaScreen",
     ]);
-    expect(analysis.high).toEqual(["Savings screen", "Savings reports", "Shareout calculation"]);
+    expect(analysis.severity).toBe("HIGH");
+    expect(analysis.direct).toEqual(["Savings screen"]);
+    expect(analysis.indirect).toEqual(["Savings reports", "Shareout", "Member details"]);
+    expect(analysis.high).toEqual(["Savings screen", "Savings reports", "Shareout", "Member details"]);
     expect(analysis.low).toEqual(["Media screen"]);
+    expect(Math.round(analysis.workflowShare * 100)).toBe(32);
+    expect(analysis.workflowLabel).toBe("Savings workflows");
+    expect(BLAST_RADIUS_FLOW).toBe(
+      [
+        "Changed function",
+        "      ↓",
+        "Call graph",
+        "      ↓",
+        "Modules",
+        "      ↓",
+        "Features",
+        "      ↓",
+        "APIs",
+        "      ↓",
+        "Database",
+        "      ↓",
+        "Users",
+      ].join("\n"),
+    );
     expect(renderBlastRadiusAscii(analysis)).toBe(
       [
-        "What else could this change break?",
+        "Changed function",
+        "      ↓",
+        "Call graph",
+        "      ↓",
+        "Modules",
+        "      ↓",
+        "Features",
+        "      ↓",
+        "APIs",
+        "      ↓",
+        "Database",
+        "      ↓",
+        "Users",
         "",
-        "Bug",
-        " ↓",
-        "SavingsRepository",
-        " ↓",
-        "Used by",
-        " ├── SavingsBloc",
-        " ├── SavingsDetailsBloc",
-        " ├── ReportsBloc",
-        " └── ShareoutBloc",
+        "Blast Radius: HIGH",
         "",
-        "Potential blast radius:",
+        "Direct:",
+        "- Savings screen",
         "",
-        "HIGH",
-        "├── Savings screen",
-        "├── Savings reports",
-        "└── Shareout calculation",
+        "Indirect:",
+        "- Savings reports",
+        "- Shareout",
+        "- Member details",
         "",
-        "LOW",
-        "└── Media screen",
+        "Potentially affected:",
+        "~32% of Savings workflows",
       ].join("\n"),
     );
   });

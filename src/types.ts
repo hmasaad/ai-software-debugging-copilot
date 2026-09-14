@@ -154,6 +154,9 @@ export interface EvidenceBundle {
   blastRadius?: BlastRadiusAnalysis;
   memory?: DebuggingMemory;
   productionInvestigation?: ProductionInvestigation;
+  rollbackIntelligence?: RollbackIntelligence;
+  incidentTimeline?: IncidentTimeline;
+  incidentResponse?: IncidentResponse;
 }
 
 export interface ReproductionResult {
@@ -249,6 +252,9 @@ export interface DebuggingReport {
   memory?: DebuggingMemory;
   production?: ProductionIncident;
   productionInvestigation?: ProductionInvestigation;
+  rollbackIntelligence?: RollbackIntelligence;
+  incidentTimeline?: IncidentTimeline;
+  incidentResponse?: IncidentResponse;
 }
 
 export interface PipelineOptions {
@@ -281,6 +287,8 @@ export type PipelineStage =
   | "flutter-agent"
   | "code-investigator"
   | "git-investigator"
+  | "first-bad-version"
+  | "git-bisect"
   | "dependency-analyst"
   | "reproduction-agent"
   | "root-cause-agent"
@@ -292,6 +300,9 @@ export type PipelineStage =
   | "incident-detect"
   | "correlation"
   | "rollback-plan"
+  | "rollback-intelligence"
+  | "incident-timeline"
+  | "incident-response"
   | "incident-agent"
   | "sandbox"
   | "autonomous"
@@ -437,6 +448,49 @@ export interface GitRegression {
   summary: string;
 }
 
+export type VersionHealthStatus = "healthy" | "crashes" | "unknown";
+
+export interface VersionHealth {
+  version: string;
+  status: VersionHealthStatus;
+  source?: "reported" | "inferred" | "current";
+}
+
+/** First crashing release after a known-healthy one, plus the git window to inspect. */
+export interface FirstBadVersion {
+  lastHealthy?: string;
+  firstBad: string;
+  laterBad: string[];
+  versions: VersionHealth[];
+  commitCount: number;
+  commits: GitCommit[];
+  fromRef?: string;
+  toRef?: string;
+  inferredLastHealthy?: boolean;
+  summary: string;
+}
+
+export type BisectVerdict = "good" | "bad" | "skip";
+
+export interface GitBisectStep {
+  sha: string;
+  subject: string;
+  verdict: BisectVerdict;
+  remaining: number;
+  detail?: string;
+}
+
+/** Automatic git bisect: binary-search the first commit that introduced the regression. */
+export interface GitBisect {
+  goodRef: string;
+  badRef: string;
+  steps: GitBisectStep[];
+  firstBad?: GitCommit;
+  testsRun: number;
+  method: "source" | "test";
+  summary: string;
+}
+
 /** Output of the Git Investigator: commits/PRs that likely introduced the problem. */
 export interface GitInvestigation {
   evidence: GitEvidence;
@@ -444,6 +498,8 @@ export interface GitInvestigation {
   suspects: GitSuspect[];
   introducing?: GitSuspect;
   regression?: GitRegression;
+  firstBadVersion?: FirstBadVersion;
+  bisect?: GitBisect;
   summary: string;
   handoff: string[];
 }
@@ -602,6 +658,20 @@ export type FixStrategy =
   | "environment-align"
   | "none";
 
+export type FixRiskLevel = "LOW" | "MEDIUM" | "HIGH";
+
+export interface FixRisk {
+  label: string;
+  files: number;
+  tests: number;
+  modules: number;
+  level: FixRiskLevel;
+  confidence: number;
+  preferred: boolean;
+  filePaths: string[];
+  reasons: string[];
+}
+
 /** Output of the Fix Agent: a minimal code fix. */
 export interface FixAnalysis {
   proposal: FixProposal;
@@ -609,6 +679,8 @@ export interface FixAnalysis {
   source: "investigator" | "heuristic";
   summary: string;
   handoff: string[];
+  risk?: FixRisk;
+  alternatives?: FixRisk[];
 }
 
 export interface ProposedTest {
@@ -780,11 +852,34 @@ export interface BlastRadiusNode {
   surface: string;
 }
 
+export type BlastRadiusSeverity = "HIGH" | "MEDIUM" | "LOW";
+
+export type BlastRadiusLayerId =
+  | "function"
+  | "call-graph"
+  | "modules"
+  | "features"
+  | "apis"
+  | "database"
+  | "users";
+
+export interface BlastRadiusLayer {
+  id: BlastRadiusLayerId;
+  label: string;
+  items: string[];
+}
+
 export interface BlastRadiusAnalysis {
   origin: string;
   usedBy: BlastRadiusNode[];
   high: string[];
   low: string[];
+  direct: string[];
+  indirect: string[];
+  severity: BlastRadiusSeverity;
+  workflowShare: number;
+  workflowLabel: string;
+  layers: BlastRadiusLayer[];
   question: string;
   summary: string;
 }
@@ -900,13 +995,84 @@ export interface RollbackPlan {
   summary: string;
 }
 
+export type MitigationAction = "patch" | "rollback" | "feature-flag" | "configuration" | "disable";
+
+export interface RollbackIntelligence {
+  canSafelyPatch: boolean;
+  action: MitigationAction;
+  target?: string;
+  reason: string;
+  fallbacks: MitigationAction[];
+  steps: string[];
+  summary: string;
+}
+
+export interface IncidentTimelineEvent {
+  at: string;
+  minutes: number;
+  label: string;
+}
+
+export interface IncidentTimeline {
+  events: IncidentTimelineEvent[];
+  impactAt?: string;
+  summary: string;
+}
+
+export type IncidentResponsePath = "rollback" | "fix";
+
+export type IncidentResponseStage =
+  | "Detection"
+  | "Investigation"
+  | "Diagnosis"
+  | "Risk Analysis"
+  | "Rollback"
+  | "Fix"
+  | "Validation"
+  | "Monitoring"
+  | "RESOLVED";
+
+export type ResponseGate = "AUTO" | "APPROVAL";
+
+export type ResponseActionId =
+  | "read-logs"
+  | "investigate"
+  | "create-reproduction"
+  | "generate-patch"
+  | "run-tests"
+  | "create-pr"
+  | "deploy"
+  | "rollback-production"
+  | "delete-modify-data";
+
+export interface IncidentResponseAction {
+  id: ResponseActionId;
+  label: string;
+  gate: ResponseGate;
+  status: "done" | "ready" | "blocked" | "waiting-approval" | "skipped";
+  detail: string;
+}
+
+export interface IncidentResponse {
+  path: IncidentResponsePath;
+  stage: IncidentResponseStage;
+  actions: IncidentResponseAction[];
+  waiting: string[];
+  reason: string;
+  summary: string;
+}
+
 export interface ProductionInvestigation {
   detection: IncidentDetection;
   logs: IncidentSignal[];
   crashes: IncidentSignal[];
   metrics?: ProductionMetrics;
   correlation: IncidentCorrelation;
+  firstBadVersion?: FirstBadVersion;
   rollbackPlan: RollbackPlan;
+  rollbackIntelligence?: RollbackIntelligence;
+  incidentTimeline?: IncidentTimeline;
+  incidentResponse?: IncidentResponse;
   summary: string;
 }
 

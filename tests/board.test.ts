@@ -286,6 +286,41 @@ const report: DebuggingReport = {
     source: "heuristic",
     summary: "Heuristic optional-chain fix in src/cart.js (1 edit, not applied).",
     handoff: ["Re-run with --apply to write the patch and verify."],
+    risk: {
+      label: "Fix A",
+      files: 2,
+      tests: 18,
+      modules: 1,
+      level: "LOW",
+      confidence: 0.94,
+      preferred: true,
+      filePaths: ["src/cart.js", "src/cart-utils.js"],
+      reasons: [],
+    },
+    alternatives: [
+      {
+        label: "Fix A",
+        files: 2,
+        tests: 18,
+        modules: 1,
+        level: "LOW",
+        confidence: 0.94,
+        preferred: true,
+        filePaths: ["src/cart.js", "src/cart-utils.js"],
+        reasons: [],
+      },
+      {
+        label: "Fix B",
+        files: 7,
+        tests: 43,
+        modules: 4,
+        level: "HIGH",
+        confidence: 0.71,
+        preferred: false,
+        filePaths: [],
+        reasons: [],
+      },
+    ],
   },
   testAnalysis: {
     verification: {
@@ -342,6 +377,47 @@ const report: DebuggingReport = {
       { tool: "search-code", detail: "cart.js: return order.item.id", ok: true },
     ],
   },
+  rollbackIntelligence: {
+    canSafelyPatch: false,
+    action: "rollback",
+    target: "1.0.180",
+    reason: "327 users after a known-bad deploy. Do not ship a code patch first.",
+    fallbacks: ["feature-flag", "configuration", "disable"],
+    steps: ["Roll back to 1.0.180"],
+    summary: "Can safely patch: NO → Rollback (1.0.180).",
+  },
+  incidentTimeline: {
+    events: [
+      { at: "14:02", minutes: 14 * 60 + 2, label: "Deployment started" },
+      { at: "14:07", minutes: 14 * 60 + 7, label: "Deployment completed" },
+      { at: "14:11", minutes: 14 * 60 + 11, label: "Error rate increased" },
+      { at: "14:13", minutes: 14 * 60 + 13, label: "Crash threshold exceeded" },
+      { at: "14:15", minutes: 14 * 60 + 15, label: "First customer impact detected" },
+      { at: "14:18", minutes: 14 * 60 + 18, label: "Regression identified" },
+      { at: "14:23", minutes: 14 * 60 + 23, label: "Fix generated" },
+      { at: "14:27", minutes: 14 * 60 + 27, label: "Fix validated" },
+    ],
+    impactAt: "14:15",
+    summary: "14:02 Deployment started → 14:27 Fix validated.",
+  },
+  incidentResponse: {
+    path: "rollback",
+    stage: "Rollback",
+    actions: [
+      { id: "read-logs", label: "Read logs", gate: "AUTO", status: "done", detail: "Logs collected." },
+      { id: "deploy", label: "Deploy", gate: "APPROVAL", status: "skipped", detail: "Not a production deploy." },
+      {
+        id: "rollback-production",
+        label: "Rollback production",
+        gate: "APPROVAL",
+        status: "waiting-approval",
+        detail: "Rolling back production requires a human.",
+      },
+    ],
+    waiting: ["Rollback production"],
+    reason: "327 users after a known-bad deploy. Do not ship a code patch first.",
+    summary: "Autonomous response: Rollback path at Rollback. Waiting for approval: Rollback production.",
+  },
 };
 
 describe("investigation board", () => {
@@ -366,6 +442,20 @@ describe("investigation board", () => {
     expect(html).toContain("Evidence graph");
     expect(html).toContain("Contradicting evidence");
     expect(html).toContain("Fix Agent");
+    expect(html).toContain("Fix A");
+    expect(html).toContain("Risk: LOW");
+    expect(html).toContain("Confidence: 94%");
+    expect(html).toContain("Prefer: smallest safe fix that resolves the problem.");
+    expect(html).toContain("Rollback intelligence");
+    expect(html).toContain("Can safely patch?");
+    expect(html).toContain("Recommended: Rollback");
+    expect(html).toContain("Incident timeline");
+    expect(html).toContain("14:02  Deployment started");
+    expect(html).toContain("14:27  Fix validated");
+    expect(html).toContain("Autonomous incident response");
+    expect(html).toContain("Read logs                 AUTO");
+    expect(html).toContain("Deploy                    APPROVAL");
+    expect(html).toContain("Rollback production       APPROVAL");
     expect(html).toContain("Test Agent");
     expect(html).toContain("Validation Agent");
     expect(html).toContain("Incident Agent");

@@ -113,5 +113,9 @@ describe("Fix Agent", () => {
     expect(run.status).toBe("ok");
     expect(result.proposal.edits[0]?.newString).toContain("item?.id");
     expect(result.strategy).toBe("optional-chain");
+    expect(result.risk?.level).toBe("LOW");
+    expect(result.risk?.files).toBe(1);
+    expect(result.risk?.modules).toBe(1);
+    expect(result.risk?.preferred).toBe(true);
   });
 });

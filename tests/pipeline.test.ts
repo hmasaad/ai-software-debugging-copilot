@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { collectEvidence } from "../src/collectors/index.js";
@@ -120,6 +120,12 @@ describe("debugBug pipeline", () => {
     expect(report.reproductionAnalysis.result.reproduced).toBe(true);
     expect(report.causeAnalysis.causes.length).toBeGreaterThan(0);
     expect(report.proposedFix.applied).toBe(true);
+    expect(report.fixAnalysis?.risk?.level).toBe("LOW");
+    expect(report.rollbackIntelligence?.canSafelyPatch).toBe(true);
+    expect(report.rollbackIntelligence?.action).toBe("patch");
+    expect(report.incidentResponse?.path).toBe("fix");
+    expect(report.incidentResponse?.stage).toBe("RESOLVED");
+    expect(report.incidentResponse?.waiting).toEqual([]);
     expect(report.verification.passed).toBe(true);
     expect(report.classification?.category).toBeTruthy();
     expect(report.iterations[0]?.summary).toMatch(/Attempt 1 → Tests passed/);
@@ -141,6 +147,98 @@ describe("debugBug pipeline", () => {
     expect(markdown).toContain("Patch → test → verify");
     expect(markdown).toContain("Proposed fix");
     expect(markdown).toContain("Verification");
+    expect(markdown).toContain("Risk: LOW");
+    expect(markdown).toContain("Read logs                 AUTO");
+    expect(markdown).toContain("Deploy                    APPROVAL");
     expect(await readFile(path.join(fixture.dir, "debug-report.md"), "utf8")).toContain("Debugging report");
+  });
+
+  it("does not apply a HIGH-risk multi-module patch even with --apply", async () => {
+    const fixture = await createCartFixture();
+    fixtures.push(fixture.dir);
+
+    await writeFile(
+      path.join(fixture.dir, "src/pay.js"),
+      `export function charge() {
+  throw new Error("declined");
+}
+`,
+    );
+
+    const wideFiles = [
+      "lib/savings/a.js",
+      "lib/savings/b.js",
+      "lib/reports/c.js",
+      "lib/reports/d.js",
+      "lib/shareout/e.js",
+      "lib/shareout/f.js",
+      "lib/media/g.js",
+    ];
+    for (const file of wideFiles) {
+      await mkdir(path.join(fixture.dir, path.dirname(file)), { recursive: true });
+      await writeFile(path.join(fixture.dir, file), "export const x = 1;\n");
+    }
+
+    const investigator: Investigator = {
+      name: "mock",
+      async analyze() {
+        return {
+          summary: "Payment charge always throws.",
+          rootCause: "charge() throws declined without a recovery path.",
+          confidence: 0.72,
+          hypotheses: [
+            {
+              id: "H1",
+              description: "Uncaught payment decline",
+              evidence: ["src/pay.js"],
+              likelihood: 0.72,
+            },
+          ],
+          affectedFiles: ["src/pay.js", ...wideFiles],
+          reproSteps: ["Run the pay path"],
+          investigator: "mock",
+        };
+      },
+      async proposeFix() {
+        return {
+          summary: "Rewrite several modules around the payment decline.",
+          rationale: "Broad refactor across savings, reports, shareout, and media.",
+          edits: wideFiles.map((file) => ({
+            path: file,
+            oldString: "export const x = 1;",
+            newString: "export const x = 2;",
+          })),
+          testPlan: ["npm test"],
+          risks: [],
+          applied: false,
+          applyErrors: [],
+        };
+      },
+    };
+
+    const report = await debugBug(
+      {
+        repoPath: fixture.dir,
+        message: "Error: declined",
+        stackTrace: `Error: declined
+    at charge (${path.join(fixture.dir, "src/pay.js")}:2:9)`,
+      },
+      {
+        repoPath: fixture.dir,
+        apply: true,
+        runTests: false,
+        investigator: "heuristic",
+        investigatorInstance: investigator,
+      },
+    );
+
+    expect(report.fixAnalysis?.risk?.level).toBe("HIGH");
+    expect(report.fixAnalysis?.risk?.files).toBe(7);
+    expect(report.fixAnalysis?.risk?.modules).toBe(4);
+    expect(report.proposedFix.applied).toBe(false);
+    expect(report.proposedFix.applyErrors.some((error) => /HIGH risk/i.test(error))).toBe(true);
+    expect(report.rollbackIntelligence?.canSafelyPatch).toBe(false);
+    expect(report.rollbackIntelligence?.action).not.toBe("patch");
+    expect(await readFile(path.join(fixture.dir, "lib/savings/a.js"), "utf8")).toBe("export const x = 1;\n");
   });
 });

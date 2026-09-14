@@ -103,8 +103,10 @@ describe("blast radius", () => {
     expect(analysis.origin).toBe("SavingsRepository");
     expect(analysis.high).toEqual(expect.arrayContaining(["Savings screen", "Savings reports"]));
     expect(analysis.low).toContain("Media screen");
-    expect(renderBlastRadiusAscii(analysis)).toContain("What else could this change break?");
-    expect(renderBlastRadiusAscii(analysis)).toContain("Potential blast radius:");
+    expect(analysis.question).toBe("What else could this affect?");
+    expect(renderBlastRadiusAscii(analysis)).toContain("Blast Radius:");
+    expect(renderBlastRadiusAscii(analysis)).toContain("Changed function");
+    expect(renderBlastRadiusAscii(analysis)).toContain("Direct:");
   });
 });
 

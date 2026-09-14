@@ -104,6 +104,78 @@ export async function showCommitDiff(repoPath: string, sha: string, files: strin
   return text.length > 4_000 ? `${text.slice(0, 4_000)}\n…` : text;
 }
 
+/** Resolve `v1.0.180` / `1.0.180` to a git tag or commit. */
+export async function resolveVersionRef(repoPath: string, version: string): Promise<string | undefined> {
+  const raw = version.trim().replace(/^v/i, "");
+  if (!raw) return undefined;
+  const candidates = [`v${raw}`, raw, version.trim()];
+  for (const ref of candidates) {
+    const result = await git(repoPath, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+    if (result && result.code === 0 && result.stdout.trim()) return ref;
+  }
+  return undefined;
+}
+
+export async function countCommitsBetween(repoPath: string, fromRef: string, toRef: string): Promise<number> {
+  const result = await git(repoPath, ["rev-list", "--count", `${fromRef}..${toRef}`], 12_000);
+  if (!result || result.code !== 0) return 0;
+  const value = Number.parseInt(result.stdout.trim(), 10);
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+export async function listCommitsBetween(repoPath: string, fromRef: string, toRef: string): Promise<GitCommit[]> {
+  const result = await git(
+    repoPath,
+    ["log", "--reverse", "--format=%H%x09%an%x09%ad%x09%s", "--date=short", `${fromRef}..${toRef}`],
+    15_000,
+  );
+  if (!result || result.code !== 0) return [];
+  return parseCommitLines(result.stdout);
+}
+
+export async function resolveCommit(repoPath: string, ref: string): Promise<GitCommit | undefined> {
+  const result = await git(repoPath, ["log", "-1", "--format=%H%x09%an%x09%ad%x09%s", "--date=short", ref]);
+  if (!result || result.code !== 0) return undefined;
+  return parseCommitLines(result.stdout)[0];
+}
+
+export async function listChangedFiles(repoPath: string, fromRef: string, toRef: string): Promise<string[]> {
+  const result = await git(repoPath, ["diff", "--name-only", fromRef, toRef], 12_000);
+  if (!result || result.code !== 0) return [];
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 80);
+}
+
+export async function showFileAt(repoPath: string, sha: string, file: string): Promise<string | undefined> {
+  for (const candidate of fileCandidates(repoPath, file)) {
+    const result = await git(repoPath, ["show", `${sha}:${candidate}`], 8_000);
+    if (result && result.code === 0) return result.stdout;
+  }
+  return undefined;
+}
+
+function fileCandidates(repoPath: string, file: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string) => {
+    const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "");
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  };
+  if (path.isAbsolute(file)) {
+    const rel = path.relative(repoPath, file);
+    if (rel && !rel.startsWith("..")) add(rel);
+  } else {
+    add(file);
+  }
+  add(path.basename(file));
+  return out;
+}
+
 function parseCommitLines(stdout: string): GitCommit[] {
   return stdout
     .split("\n")

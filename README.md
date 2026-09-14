@@ -114,19 +114,149 @@ SavingsRepository.dart
 Confidence: 89%
 ```
 
+When version health is known, Git Investigator also names the **first bad version** and inspects the commit window after the last healthy release:
+
+```
+v1.0.180 → healthy
+v1.0.181 → crashes
+v1.0.182 → crashes
+```
+
+```
+v1.0.180
+   ↓
+12 commits
+   ↓
+v1.0.181
+   ↓
+Crash begins
+```
+
+`v1.0.181` is the first known bad version. Later crashing builds (182) are treated as the same regression, not new introductions.
+
+It then **automatically git-bisects** that window: test the middle commit, keep the good or bad half, and repeat until the introducing commit is isolated.
+
+```
+Good commit
+     ↓
+          Middle commit
+          ↓
+       Test
+      ↙     ↘
+   Good     Bad
+     ↓       ↓
+   search  search
+      ↘     ↙
+      Bad commit
+```
+
+The origin working tree is never checked out. Bisect uses `git show` (crash fingerprint) or an isolated worktree when a test command is available.
+
 Dependency Analyst classifies missing modules, lockfile drift, peer-dep failures, and ESM/CJS mismatches so later stages do not patch application code for an install problem.
 
 Reproduction Agent asks “can I reproduce this bug?”: it names the symptoms, builds a scenario, runs the app/tests (or generates a Flutter/JS regression test), captures the live failure, and compares it to the report. A match raises diagnosis confidence.
 
 Root Cause Agent builds an **evidence graph** from crash → source → data → commit/PR, then ranks competing causes. Every conclusion lists supporting checks (stack, source, API/null, git, reproduction) and contradicting evidence, instead of a free-form explanation.
 
-Fix Agent turns the leading cause into the smallest search/replace edit (optional chaining, nullish defaults, or an LLM patch). It will not patch application code when Dependency Analyst says the failure is an install/version issue.
+Fix Agent turns the leading cause into the smallest safe search/replace edit (optional chaining, nullish defaults, or an LLM patch). Every candidate gets a risk score — files changed, tests in range, modules touched, and confidence — and the agent prefers the **smallest safe fix that resolves the problem**. HIGH-risk patches are not applied to production code.
+
+```
+Fix A
+────────────────
+Change: 2 files
+Tests: 18
+Affected modules: 1
+Risk: LOW
+Confidence: 94%
+
+Fix B
+────────────────
+Change: 7 files
+Tests: 43
+Affected modules: 4
+Risk: HIGH
+Confidence: 71%
+
+Prefer: smallest safe fix that resolves the problem.
+```
+
+It will not patch application code when Dependency Analyst says the failure is an install/version issue.
+
+**Rollback intelligence** asks whether a code change is even the right response. Sometimes the best fix is a rollback, a feature flag, a configuration change, or disabling the affected surface:
+
+```
+Incident
+   ↓
+Can safely patch?
+ ├── YES → Patch
+ │
+ └── NO
+      ↓
+   Rollback?
+      ↓
+   Feature flag?
+      ↓
+   Configuration change?
+      ↓
+   Disable affected functionality?
+```
 
 Test Agent proposes a regression test around the crashing function and, with `--apply`, runs the suite against the patch.
 
 Validation Agent judges whether the original issue is actually gone: patch applied, crash-site source updated, tests passing, original error absent from output, and a failing-then-passing flip.
 
 Incident Agent writes a SEV-style report (what happened, impact, root cause, fix, validation, timeline, follow-ups) that an engineer can paste into Slack or a postmortem.
+
+**Incident timeline** reconstructs the clock from deploy, metrics, first customer impact, git regression, and the fix/validation loop:
+
+```
+14:02  Deployment started
+14:07  Deployment completed
+14:11  Error rate increased
+14:13  Crash threshold exceeded
+14:15  First customer impact detected
+14:18  Regression identified
+14:23  Fix generated
+14:27  Fix validated
+```
+
+**Autonomous incident response** connects detection through resolution, and keeps humans on destructive actions:
+
+```
+             Detection
+                 ↓
+          Investigation
+                 ↓
+            Diagnosis
+                 ↓
+          Risk Analysis
+                 ↓
+       ┌─────────┴─────────┐
+       ↓                   ↓
+    Rollback             Fix
+       │                   │
+       └─────────┬─────────┘
+                 ↓
+             Validation
+                 ↓
+            Monitoring
+                 ↓
+              RESOLVED
+```
+
+```
+Read logs                 AUTO
+Investigate               AUTO
+Create reproduction       AUTO
+Generate patch            AUTO
+Run tests                 AUTO
+Create PR                 AUTO
+Deploy                    APPROVAL
+Rollback production       APPROVAL
+Delete/modify data        APPROVAL
+```
+
+`--apply` still writes a local (or sandbox) patch. It never deploys, never rolls back production, and never applies a delete/modify-data patch.
 
 Before investigation, **Failure Classifier** splits the problem into Runtime / Build / Logic, then names a subtype (Null Crash, Gradle, Wrong state, …) and a routing category (runtime crash, build failure, dependency, API, database, UI, state, performance, race, environment, security). That routing starts Crash, Network, Database, Flutter, and Dependency specialists. Their findings feed **Root Cause Agent**.
 
@@ -213,28 +343,37 @@ Recommended action:
 Rollback / hotfix
 ```
 
-**Blast-radius analysis** asks **what else could this change break?** After the crash origin is known, it lists consumers (blocs, screens) and ranks product surfaces HIGH vs LOW:
+**Blast-radius analysis** asks **what else could this affect?** Once the root cause is known, it walks the change through the call graph, modules, features, APIs, database, and users:
 
 ```
-Bug
- ↓
-SavingsRepository
- ↓
-Used by
- ├── SavingsBloc
- ├── SavingsDetailsBloc
- ├── ReportsBloc
- └── ShareoutBloc
+Changed function
+      ↓
+Call graph
+      ↓
+Modules
+      ↓
+Features
+      ↓
+APIs
+      ↓
+Database
+      ↓
+Users
+```
 
-Potential blast radius:
+```
+Blast Radius: HIGH
 
-HIGH
-├── Savings screen
-├── Savings reports
-└── Shareout calculation
+Direct:
+- Savings screen
 
-LOW
-└── Media screen
+Indirect:
+- Savings reports
+- Shareout
+- Member details
+
+Potentially affected:
+~32% of Savings workflows
 ```
 
 **Debugging memory** turns each investigation into reusable knowledge:

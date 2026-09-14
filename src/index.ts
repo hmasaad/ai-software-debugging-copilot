@@ -48,8 +48,37 @@ export {
   parsePrNumber,
   renderGitRegressionAscii,
 } from "./analysis/git-regression.js";
+export {
+  detectFirstBadVersion,
+  investigateFirstBadVersion,
+  parseVersionHealth,
+  renderFirstBadVersionAscii,
+  previousPatch,
+} from "./analysis/first-bad-version.js";
+export {
+  bisectCommits,
+  runGitBisect,
+  renderGitBisectAscii,
+  GIT_BISECT_FLOW,
+} from "./analysis/git-bisect.js";
 export { classifyFailure, renderClassificationAscii } from "./analysis/classify.js";
-export { buildBlastRadius, renderBlastRadiusAscii } from "./analysis/blast-radius.js";
+export { buildBlastRadius, renderBlastRadiusAscii, BLAST_RADIUS_FLOW } from "./analysis/blast-radius.js";
+export { scoreFixRisk, renderFixRiskAscii, preferSmallestSafeFix, FIX_RISK_RULE } from "./analysis/fix-risk.js";
+export {
+  buildRollbackIntelligence,
+  renderRollbackIntelligenceAscii,
+  canSafelyPatch,
+  ROLLBACK_INTELLIGENCE_FLOW,
+} from "./analysis/rollback-intelligence.js";
+export { buildIncidentTimeline, renderIncidentTimelineAscii } from "./analysis/incident-timeline.js";
+export {
+  buildIncidentResponse,
+  renderIncidentResponseAscii,
+  canExecuteAutonomously,
+  looksLikeDataMutation,
+  INCIDENT_RESPONSE_FLOW,
+  INCIDENT_RESPONSE_GATES,
+} from "./analysis/incident-response.js";
 export { recallIncidents, rememberIncident, renderMemoryAscii } from "./analysis/memory.js";
 export {
   buildProductionIncident,
@@ -84,12 +113,16 @@ export type {
   CodeInvestigation,
   GitInvestigation,
   GitRegression,
+  FirstBadVersion,
+  VersionHealth,
+  GitBisect,
   DependencyAnalysis,
   ReproductionAnalysis,
   ReproductionMatch,
   CauseAnalysis,
   EvidenceGraph,
   FixAnalysis,
+  FixRisk,
   TestAnalysis,
   ValidationAnalysis,
   IncidentReport,
@@ -99,6 +132,11 @@ export type {
   DebuggingMemory,
   ProductionIncident,
   ProductionInvestigation,
+  RollbackIntelligence,
+  MitigationAction,
+  IncidentTimeline,
+  IncidentResponse,
+  IncidentResponseAction,
   IncidentCorrelation,
   CorrelationEvent,
   EvalRun,

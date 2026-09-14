@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { countAffectedTests, labelFixCandidates, preferSmallestSafeFix, sameEdits, scoreFixRisk } from "../analysis/fix-risk.js";
 import type {
   AgentRun,
   CauseAnalysis,
@@ -8,6 +9,7 @@ import type {
   FileEdit,
   FixAnalysis,
   FixProposal,
+  FixRisk,
   FixStrategy,
   ParsedError,
   RootCauseAnalysis,
@@ -66,8 +68,11 @@ export class FixAgent implements SpecialistAgent<FixAnalysis> {
       causeAnalysis: ctx.causeAnalysis,
     });
 
-    if (proposal.edits.length === 0 && heuristic.edit) {
-      proposal = {
+    const related = ctx.evidence?.tests?.relatedTests ?? [];
+    const candidates: Array<{ proposal: FixProposal; strategy: FixStrategy; source: FixAnalysis["source"]; edits: FileEdit[] }> = [];
+
+    if (heuristic.edit) {
+      const heuristicProposal: FixProposal = {
         summary: heuristic.summary,
         rationale: rca.rootCause,
         edits: [heuristic.edit],
@@ -76,23 +81,77 @@ export class FixAgent implements SpecialistAgent<FixAnalysis> {
         applied: false,
         applyErrors: [],
       };
-      source = "heuristic";
-      strategy = heuristic.strategy;
-    } else if (proposal.edits.length && investigator.name === "heuristic" && heuristic.strategy !== "none") {
-      strategy = heuristic.strategy;
+      candidates.push({
+        proposal: heuristicProposal,
+        strategy: heuristic.strategy,
+        source: "heuristic",
+        edits: heuristicProposal.edits,
+      });
     }
 
-    const handoff = buildFixHandoff(proposal, strategy, leading?.description);
+    if (proposal.edits.length && !candidates.some((item) => sameEdits(item.edits, proposal.edits))) {
+      if (investigator.name === "heuristic" && heuristic.strategy !== "none") {
+        strategy = heuristic.strategy;
+      }
+      candidates.push({ proposal, strategy, source, edits: proposal.edits });
+    }
+
+    if (!candidates.length) {
+      const handoff = buildFixHandoff(proposal, strategy, leading?.description);
+      return {
+        proposal,
+        strategy,
+        source,
+        summary: buildFixSummary(proposal, strategy, source),
+        handoff,
+        risk: scoreFixRisk({ files: [], tests: 0, baseConfidence: rca.confidence, strategy }),
+        alternatives: [],
+      };
+    }
+
+    const scored = candidates.map((item) => ({
+      ...item,
+      risk: scoreFixRisk({
+        files: item.edits.map((edit) => edit.path),
+        tests: countAffectedTests(ctx.input.repoPath, item.edits.map((edit) => edit.path), related),
+        baseConfidence: rca.confidence,
+        strategy: item.strategy,
+      }),
+    }));
+    const ranked = preferSmallestSafeFix(scored);
+    const winner = ranked[0];
+    if (!winner) {
+      return emptyFix("none", source, ctx, "No fix candidate survived risk ranking.");
+    }
+    const alternatives = labelFixCandidates(ranked.map((item) => item.risk));
+    const preferred = alternatives[0];
+    if (!preferred) {
+      return emptyFix("none", source, ctx, "No fix candidate survived risk ranking.");
+    }
+    proposal = winner.proposal;
+    strategy = winner.strategy;
+    source = winner.source;
+    const risk: FixRisk = { ...preferred, preferred: true };
+
+    const handoff = buildFixHandoff(proposal, strategy, leading?.description, risk);
     const previous = ctx.memory?.matches[0]?.entry;
     if (previous?.fix) {
       handoff.unshift(`Debugging memory: a similar incident was fixed with "${previous.fix}".`);
+    }
+    if (alternatives.length > 1) {
+      handoff.unshift("Prefer the smallest safe fix that resolves the problem.");
+    }
+    if (risk.level === "HIGH") {
+      handoff.unshift("HIGH risk: do not apply this patch to production code without review.");
     }
     return {
       proposal,
       strategy,
       source,
-      summary: buildFixSummary(proposal, strategy, source),
+      summary: buildFixSummary(proposal, strategy, source, risk),
       handoff,
+      risk,
+      alternatives,
     };
   }
 }
@@ -184,17 +243,18 @@ function pickExisting(content: string, expression: string): string | undefined {
   return line?.trim();
 }
 
-function buildFixSummary(proposal: FixProposal, strategy: FixStrategy, source: FixAnalysis["source"]): string {
+function buildFixSummary(proposal: FixProposal, strategy: FixStrategy, source: FixAnalysis["source"], risk?: FixRisk): string {
   if (strategy === "dependency-install" || strategy === "environment-align") return proposal.summary;
   if (!proposal.edits.length) {
     return proposal.summary || "No minimal edit generated; wait for an LLM investigator or a clearer crash expression.";
   }
   const where = proposal.edits.map((edit) => edit.path).join(", ");
   const applied = proposal.applied ? "applied" : "not applied";
-  return `${source === "investigator" ? "Investigator" : "Heuristic"} ${strategy} fix in ${where} (${proposal.edits.length} edit${proposal.edits.length === 1 ? "" : "s"}, ${applied}).`;
+  const riskBit = risk ? ` Risk ${risk.level} (${Math.round(risk.confidence * 100)}%).` : "";
+  return `${source === "investigator" ? "Investigator" : "Heuristic"} ${strategy} fix in ${where} (${proposal.edits.length} edit${proposal.edits.length === 1 ? "" : "s"}, ${applied}).${riskBit}`;
 }
 
-function buildFixHandoff(proposal: FixProposal, strategy: FixStrategy, leading?: string): string[] {
+function buildFixHandoff(proposal: FixProposal, strategy: FixStrategy, leading?: string, risk?: FixRisk): string[] {
   const notes: string[] = [];
   if (strategy === "dependency-install") {
     notes.push("Do not patch application code until the dependency/version hypothesis is ruled out.");
@@ -203,6 +263,11 @@ function buildFixHandoff(proposal: FixProposal, strategy: FixStrategy, leading?:
   if (strategy === "environment-align") {
     notes.push("Do not patch application code until the toolchain mismatch is ruled out.");
     return notes;
+  }
+  if (risk) {
+    notes.push(
+      `${risk.label}: ${risk.files} file${risk.files === 1 ? "" : "s"}, ${risk.tests} tests, ${risk.modules} module${risk.modules === 1 ? "" : "s"}, ${risk.level} risk, ${Math.round(risk.confidence * 100)}% confidence.`,
+    );
   }
   if (proposal.edits[0]) {
     notes.push(`Review ${proposal.edits[0].path}: \`${oneLine(proposal.edits[0].oldString)}\` → \`${oneLine(proposal.edits[0].newString)}\`.`);
@@ -247,6 +312,8 @@ function emptyFix(
       { summary, rationale: "", edits: [], testPlan: [], risks: [], applied: false, applyErrors: [] },
       strategy,
     ),
+    risk: scoreFixRisk({ files: [], tests: 0, strategy }),
+    alternatives: [],
   };
 }
 

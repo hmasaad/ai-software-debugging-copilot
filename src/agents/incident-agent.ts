@@ -13,11 +13,14 @@ import type {
   LogAnalysis,
   ProductionInvestigation,
   ReproductionAnalysis,
+  RollbackIntelligence,
+  IncidentTimeline,
   RootCauseAnalysis,
   TestAnalysis,
   ValidationAnalysis,
 } from "../types.js";
 import { buildProductionIncident, crashFingerprint } from "../analysis/production.js";
+import { renderIncidentTimelineAscii } from "../analysis/incident-timeline.js";
 import { INCIDENT_AGENT, type AgentContext, type SpecialistAgent } from "./types.js";
 
 /**
@@ -72,6 +75,8 @@ export class IncidentAgent implements SpecialistAgent<IncidentReport> {
       memory: ctx.memory,
       production,
       investigation: ctx.investigation,
+      rollbackIntelligence: ctx.rollbackIntelligence ?? ctx.investigation?.rollbackIntelligence,
+      incidentTimeline: ctx.incidentTimeline ?? ctx.investigation?.incidentTimeline,
     });
     return report;
   }
@@ -91,6 +96,8 @@ export function buildIncidentReport(input: {
   memory?: DebuggingMemory;
   production?: ReturnType<typeof buildProductionIncident>;
   investigation?: ProductionInvestigation;
+  rollbackIntelligence?: RollbackIntelligence;
+  incidentTimeline?: IncidentTimeline;
 }): IncidentReport {
   const error = input.logAnalysis?.error;
   const crash = input.logAnalysis?.crashSite ?? input.codeInvestigation?.origin;
@@ -139,6 +146,13 @@ export function buildIncidentReport(input: {
     `### Validation`,
     validation,
     "",
+    input.incidentTimeline ?? input.investigation?.incidentTimeline
+      ? [
+          `### Incident Timeline`,
+          renderIncidentTimelineAscii(input.incidentTimeline ?? input.investigation?.incidentTimeline),
+          "",
+        ].join("\n")
+      : "",
     `### Timeline`,
     ...timeline.map((event) => `- **${event.label}:** ${event.detail}`),
     "",
@@ -172,9 +186,18 @@ export function buildIncidentReport(input: {
           `### Fix / Rollback Plan`,
           input.investigation.rollbackPlan.summary,
           ...input.investigation.rollbackPlan.steps.map((step, index) => `${index + 1}. ${step}`),
+          input.investigation.rollbackIntelligence || input.rollbackIntelligence
+            ? [
+                "",
+                `### Rollback Intelligence`,
+                (input.investigation.rollbackIntelligence ?? input.rollbackIntelligence)?.summary,
+              ].join("\n")
+            : "",
           "",
         ].join("\n")
-      : "",
+      : input.rollbackIntelligence
+        ? [`### Rollback Intelligence`, input.rollbackIntelligence.summary, ""].join("\n")
+        : "",
     `### Follow-ups`,
     ...(followUps.length ? followUps.map((item) => `- ${item}`) : ["- None."]),
   ].join("\n");
@@ -316,9 +339,14 @@ function buildTimeline(input: Parameters<typeof buildIncidentReport>[0]): Incide
 }
 
 function buildFollowUps(input: Parameters<typeof buildIncidentReport>[0]): string[] {
+  const intelligence = input.rollbackIntelligence ?? input.investigation?.rollbackIntelligence;
   const notes = [
     ...(input.validation?.handoff ?? []),
-    ...(input.fixAnalysis?.proposal.applied ? [] : ["Apply the patch with --apply and re-run validation."]),
+    ...(intelligence && intelligence.action !== "patch"
+      ? [intelligence.summary, ...(intelligence.steps[0] ? [intelligence.steps[0]] : [])]
+      : input.fixAnalysis?.proposal.applied
+        ? []
+        : ["Apply the patch with --apply and re-run validation."]),
     ...(input.testAnalysis?.proposedTest && !input.testAnalysis.proposedTest.created
       ? [`Add regression coverage: ${input.testAnalysis.proposedTest.path}.`]
       : []),

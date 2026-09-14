@@ -5,11 +5,18 @@ import {
   isPotentialIncident,
   renderCorrelationAscii,
 } from "./correlation-engine.js";
+import { detectFirstBadVersion, previousPatch, renderFirstBadVersionAscii } from "./first-bad-version.js";
+import { buildRollbackIntelligence, renderRollbackIntelligenceAscii } from "./rollback-intelligence.js";
+import { buildIncidentTimeline, renderIncidentTimelineAscii } from "./incident-timeline.js";
 import type {
   BlastRadiusAnalysis,
   BugInput,
+  CauseAnalysis,
+  CodeInvestigation,
   DebuggingMemory,
   DependencyAnalysis,
+  EnvironmentAnalysis,
+  FirstBadVersion,
   FixAnalysis,
   GitInvestigation,
   IncidentDetection,
@@ -235,7 +242,10 @@ export function buildRollbackPlan(input: {
     introducing: Boolean(introducing),
     hasFix: Boolean(input.fixAnalysis?.proposal.summary || input.rootCause),
   });
-  const previous = previousRelease(bug.version);
+  const previous =
+    input.gitInvestigation?.firstBadVersion?.lastHealthy ??
+    detectFirstBadVersion({ current: bug.version, extraContext: blobFrom(bug) })?.lastHealthy ??
+    previousPatch(bug.version);
   const target =
     action === "rollback"
       ? previous ?? (introducing ? introducing.sha.slice(0, 8) : undefined)
@@ -290,6 +300,9 @@ export function investigateProductionIncident(input: {
   blastRadius?: BlastRadiusAnalysis;
   fixAnalysis?: FixAnalysis;
   validation?: ValidationAnalysis;
+  causeAnalysis?: CauseAnalysis;
+  environment?: EnvironmentAnalysis;
+  codeInvestigation?: CodeInvestigation;
 }): ProductionInvestigation | undefined {
   const bug = mergeProductionInput(input.bug);
   const metrics = parseProductionMetrics(blobFrom(bug), bug.metrics);
@@ -325,6 +338,27 @@ export function investigateProductionIncident(input: {
     validation: input.validation,
     metrics,
   });
+  const firstBadVersion = resolveFirstBadVersion(bug, input.gitInvestigation);
+  const rollbackIntelligence = buildRollbackIntelligence({
+    bug,
+    gitInvestigation: input.gitInvestigation,
+    blastRadius: input.blastRadius,
+    fixAnalysis: input.fixAnalysis,
+    validation: input.validation,
+    causeAnalysis: input.causeAnalysis,
+    environment: input.environment,
+    dependencyAnalysis: input.dependencyAnalysis,
+    codeInvestigation: input.codeInvestigation,
+  });
+  const incidentTimeline = buildIncidentTimeline({
+    bug,
+    metrics,
+    logAnalysis: input.logAnalysis,
+    gitInvestigation: input.gitInvestigation,
+    correlation,
+    fixAnalysis: input.fixAnalysis,
+    validation: input.validation,
+  });
 
   return {
     detection,
@@ -332,8 +366,11 @@ export function investigateProductionIncident(input: {
     crashes: signals.filter((signal) => signal.kind === "crash"),
     metrics,
     correlation,
+    firstBadVersion,
     rollbackPlan,
-    summary: `${detection.summary} ${correlation.summary} ${rollbackPlan.summary}`,
+    rollbackIntelligence,
+    incidentTimeline,
+    summary: `${detection.summary} ${correlation.summary} ${rollbackPlan.summary} ${rollbackIntelligence.summary}${incidentTimeline ? ` ${incidentTimeline.summary}` : ""}`,
   };
 }
 
@@ -345,9 +382,18 @@ export function renderProductionInvestigatorAscii(investigation?: ProductionInve
     renderDetectionAscii(investigation),
     "",
     renderCorrelationAscii(investigation.correlation),
+    investigation.firstBadVersion ? ["", renderFirstBadVersionAscii(investigation.firstBadVersion)].join("\n") : undefined,
     "",
     renderRollbackPlanAscii(investigation.rollbackPlan),
-  ].join("\n");
+    investigation.rollbackIntelligence
+      ? ["", renderRollbackIntelligenceAscii(investigation.rollbackIntelligence)].join("\n")
+      : undefined,
+    investigation.incidentTimeline
+      ? ["", renderIncidentTimelineAscii(investigation.incidentTimeline)].join("\n")
+      : undefined,
+  ]
+    .filter((block): block is string => Boolean(block))
+    .join("\n");
 }
 
 export function renderDetectionAscii(investigation: ProductionInvestigation): string {
@@ -456,12 +502,9 @@ function isErrorSpike(metrics?: ProductionMetrics): boolean {
   return metrics.errorRate >= 0.02;
 }
 
-function previousRelease(version?: string): string | undefined {
-  const match = version?.match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!match?.[1] || !match[2] || match[3] == null) return undefined;
-  const patch = Number.parseInt(match[3], 10);
-  if (!Number.isFinite(patch) || patch <= 0) return undefined;
-  return `${match[1]}.${match[2]}.${patch - 1}`;
+function resolveFirstBadVersion(bug: BugInput, git?: GitInvestigation): FirstBadVersion | undefined {
+  if (git?.firstBadVersion) return git.firstBadVersion;
+  return detectFirstBadVersion({ current: bug.version, extraContext: blobFrom(bug) });
 }
 
 function blobFrom(bug: BugInput): string {

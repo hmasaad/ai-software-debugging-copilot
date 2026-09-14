@@ -16,6 +16,9 @@ import type {
   ProductionIncident,
   ProductionInvestigation,
   ReproductionAnalysis,
+  RollbackIntelligence,
+  IncidentTimeline,
+  IncidentResponse,
   SandboxSession,
   SpecialistFindings,
   StackFrame,
@@ -23,6 +26,13 @@ import type {
   ValidationAnalysis,
 } from "../types.js";
 import { PRODUCTION_INVESTIGATOR_FLOW, renderCorrelationAscii } from "../analysis/incident-investigator.js";
+import { renderFirstBadVersionAscii } from "../analysis/first-bad-version.js";
+import { renderGitBisectAscii } from "../analysis/git-bisect.js";
+import { renderBlastRadiusAscii } from "../analysis/blast-radius.js";
+import { renderFixRiskAscii } from "../analysis/fix-risk.js";
+import { renderRollbackIntelligenceAscii } from "../analysis/rollback-intelligence.js";
+import { renderIncidentTimelineAscii } from "../analysis/incident-timeline.js";
+import { renderIncidentResponseAscii } from "../analysis/incident-response.js";
 
 export function renderInvestigationBoard(report: DebuggingReport): string {
   const e = report.evidence;
@@ -106,6 +116,36 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
           },
         ]
       : []),
+    ...(report.rollbackIntelligence
+      ? [
+          {
+            id: "rollback-intelligence",
+            label: "Mitigate",
+            state: report.rollbackIntelligence.canSafelyPatch ? ("done" as const) : ("pending" as const),
+            detail: report.rollbackIntelligence.summary,
+          },
+        ]
+      : []),
+    ...(report.incidentTimeline
+      ? [
+          {
+            id: "incident-timeline",
+            label: "Timeline",
+            state: "done" as const,
+            detail: report.incidentTimeline.summary,
+          },
+        ]
+      : []),
+    ...(report.incidentResponse
+      ? [
+          {
+            id: "incident-response",
+            label: "Response",
+            state: report.incidentResponse.waiting.length ? ("pending" as const) : ("done" as const),
+            detail: report.incidentResponse.summary,
+          },
+        ]
+      : []),
   ];
 
   return `<!DOCTYPE html>
@@ -157,6 +197,9 @@ export function renderInvestigationBoard(report: DebuggingReport): string {
   ${report.classification ? classificationCard(report.classification) : ""}
   ${report.environment ? environmentCard(report.environment) : ""}
   ${report.blastRadius ? blastRadiusCard(report.blastRadius) : ""}
+  ${report.rollbackIntelligence ? rollbackIntelligenceCard(report.rollbackIntelligence) : ""}
+  ${report.incidentTimeline ? incidentTimelineCard(report.incidentTimeline) : ""}
+  ${report.incidentResponse ? incidentResponseCard(report.incidentResponse) : ""}
   ${report.memory ? memoryCard(report.memory) : ""}
   ${report.specialists ? specialistsCard(report.specialists) : ""}
 
@@ -474,21 +517,47 @@ function snapshotHtml(label: string, runtime: EnvironmentAnalysis["local"]): str
 }
 
 function blastRadiusCard(analysis: BlastRadiusAnalysis): string {
-  const used = analysis.usedBy
-    .filter((node) => node.kind === "bloc" || node.kind === "symbol")
-    .map((node) => `<li>${esc(node.name)}</li>`)
-    .join("");
-  const high = analysis.high.map((name) => `<li>${esc(name)}</li>`).join("");
-  const low = analysis.low.map((name) => `<li>${esc(name)}</li>`).join("");
+  const direct = analysis.direct.map((name) => `<li>${esc(name)}</li>`).join("");
+  const indirect = analysis.indirect.map((name) => `<li>${esc(name)}</li>`).join("");
   return `<div class="card">
     <h3>Blast radius</h3>
     <p class="meta">${esc(analysis.question)}</p>
-    <p class="lead">${esc(analysis.origin)}</p>
-    ${used ? `<p class="meta">Used by</p><ul>${used}</ul>` : ""}
-    <p class="meta">HIGH</p>
-    ${high ? `<ul>${high}</ul>` : "<p class=\"meta\">none</p>"}
-    <p class="meta">LOW</p>
-    ${low ? `<ul>${low}</ul>` : "<p class=\"meta\">none</p>"}
+    <p class="lead">Blast Radius: ${esc(analysis.severity)}</p>
+    ${direct ? `<p class="meta">Direct</p><ul>${direct}</ul>` : ""}
+    ${indirect ? `<p class="meta">Indirect</p><ul>${indirect}</ul>` : ""}
+    <p class="meta">Potentially affected ~${Math.round(analysis.workflowShare * 100)}% of ${esc(analysis.workflowLabel)}</p>
+    <pre class="ascii">${esc(renderBlastRadiusAscii(analysis))}</pre>
+  </div>`;
+}
+
+function rollbackIntelligenceCard(analysis: RollbackIntelligence): string {
+  return `<div class="card ${analysis.canSafelyPatch ? "" : "tint-warn"}">
+    <h3>Rollback intelligence</h3>
+    <p class="meta">Sometimes the best fix is not a code change</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    <pre class="ascii">${esc(renderRollbackIntelligenceAscii(analysis))}</pre>
+  </div>`;
+}
+
+function incidentTimelineCard(analysis: IncidentTimeline): string {
+  return `<div class="card">
+    <h3>Incident timeline</h3>
+    <p class="meta">Automatically reconstructed from deploy, metrics, and investigation</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    <pre class="ascii">${esc(renderIncidentTimelineAscii(analysis))}</pre>
+  </div>`;
+}
+
+function incidentResponseCard(analysis: IncidentResponse): string {
+  const waiting = analysis.waiting.length
+    ? `<p class="meta">Waiting for approval: ${esc(analysis.waiting.join(", "))}</p>`
+    : `<p class="meta">Waiting for approval: none</p>`;
+  return `<div class="card ${analysis.waiting.length ? "tint-warn" : "tint-ok"}">
+    <h3>Autonomous incident response</h3>
+    <p class="meta">Path ${esc(analysis.path === "rollback" ? "Rollback" : "Fix")} · stage ${esc(analysis.stage)}</p>
+    <p class="lead">${esc(analysis.summary)}</p>
+    ${waiting}
+    <pre class="ascii">${esc(renderIncidentResponseAscii(analysis))}</pre>
   </div>`;
 }
 
@@ -541,9 +610,24 @@ function investigatorCard(investigation: ProductionInvestigation): string {
       ${chain ? `<p class="meta">Connected events</p><ul>${chain}</ul>` : ""}
       ${links ? `<ul>${links}</ul>` : ""}
       <pre class="ascii">${esc(renderCorrelationAscii(investigation.correlation))}</pre>
+      ${
+        investigation.firstBadVersion
+          ? `<p class="lead">${esc(investigation.firstBadVersion.summary)}</p><pre class="ascii">${esc(renderFirstBadVersionAscii(investigation.firstBadVersion))}</pre>`
+          : ""
+      }
       <p class="lead">${esc(investigation.rollbackPlan.summary)}</p>
       ${steps ? `<ol>${steps}</ol>` : ""}
       ${risks ? `<p class="meta">Risks</p><ul>${risks}</ul>` : ""}
+      ${
+        investigation.rollbackIntelligence
+          ? `<p class="lead">${esc(investigation.rollbackIntelligence.summary)}</p><pre class="ascii">${esc(renderRollbackIntelligenceAscii(investigation.rollbackIntelligence))}</pre>`
+          : ""
+      }
+      ${
+        investigation.incidentTimeline
+          ? `<p class="lead">${esc(investigation.incidentTimeline.summary)}</p><pre class="ascii">${esc(renderIncidentTimelineAscii(investigation.incidentTimeline))}</pre>`
+          : ""
+      }
       <pre class="ascii">${esc(PRODUCTION_INVESTIGATOR_FLOW)}</pre>
     </div>
   </section>`;
@@ -610,11 +694,17 @@ function fixAgentCard(analysis: FixAnalysis): string {
   const handoff = analysis.handoff.length
     ? `<ul>${analysis.handoff.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>`
     : "";
+  const risk = analysis.alternatives?.length
+    ? `<pre class="ascii">${esc(renderFixRiskAscii(analysis.alternatives))}</pre>`
+    : analysis.risk
+      ? `<pre class="ascii">${esc(renderFixRiskAscii([analysis.risk]))}</pre>`
+      : "";
 
   return `<div class="card ${analysis.proposal.applied ? "tint-ok" : analysis.proposal.edits.length ? "tint-warn" : ""}">
     <h3>Fix Agent</h3>
     <p class="meta">Generate a minimal code fix</p>
     <p class="lead">${esc(analysis.summary)}</p>
+    ${risk}
     <p class="meta">Strategy <code>${esc(analysis.strategy)}</code> · ${esc(analysis.source)}${analysis.proposal.applied ? " · applied" : ""}</p>
     ${edits}
     ${handoff}
@@ -770,6 +860,12 @@ function gitInvestigatorCard(analysis: GitInvestigation): string {
         `<li><code>${esc(commit.sha.slice(0, 8))}</code> ${esc(commit.date)} ${esc(commit.author)}: ${esc(commit.subject)} — ${esc(commit.reasons.join("; "))}</li>`,
     )
     .join("");
+  const firstBad = analysis.firstBadVersion
+    ? `<pre class="ascii">${esc(renderFirstBadVersionAscii(analysis.firstBadVersion))}</pre>`
+    : "";
+  const bisect = analysis.bisect
+    ? `<pre class="ascii">${esc(renderGitBisectAscii(analysis.bisect))}</pre>`
+    : "";
   const prs = analysis.pullRequests
     .slice(0, 4)
     .map((pr) => `<li>#${pr.number} ${esc(pr.title)} (${esc(pr.state)})</li>`)
@@ -782,6 +878,8 @@ function gitInvestigatorCard(analysis: GitInvestigation): string {
     <h3>Git Investigator</h3>
     <p class="meta">Find when the bug appeared (git regression)</p>
     <p class="lead">${esc(analysis.summary)}</p>
+    ${firstBad}
+    ${bisect}
     ${introducing}
     ${prBody}
     ${suspects ? `<ul>${suspects}</ul>` : ""}

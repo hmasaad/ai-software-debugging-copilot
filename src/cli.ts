@@ -7,15 +7,21 @@ import { renderMarkdownReport } from "./report/markdown.js";
 import { renderDebugResult } from "./report/result.js";
 import { renderEvidenceGraphAscii } from "./analysis/evidence-graph.js";
 import { renderGitRegressionAscii } from "./analysis/git-regression.js";
+import { renderFirstBadVersionAscii } from "./analysis/first-bad-version.js";
+import { renderGitBisectAscii } from "./analysis/git-bisect.js";
 import { renderAttemptLog } from "./analysis/attempts.js";
 import { renderClassificationAscii } from "./analysis/classify.js";
 import { renderBlastRadiusAscii } from "./analysis/blast-radius.js";
+import { renderFixRiskAscii } from "./analysis/fix-risk.js";
 import { renderEnvironmentAscii } from "./collectors/runtime.js";
 import { renderProductionIncidentAscii } from "./analysis/production.js";
 import {
   parseProductionMetrics,
   renderProductionInvestigatorAscii,
 } from "./analysis/incident-investigator.js";
+import { renderRollbackIntelligenceAscii } from "./analysis/rollback-intelligence.js";
+import { renderIncidentTimelineAscii } from "./analysis/incident-timeline.js";
+import { renderIncidentResponseAscii } from "./analysis/incident-response.js";
 import { renderMemoryAscii } from "./analysis/memory.js";
 import { evalsBelowSlo, renderEvalFooter, runEvalSuite } from "./evals/run.js";
 import { renderSpecialistsAscii } from "./agents/specialists.js";
@@ -30,8 +36,8 @@ const HELP = `Usage: debug-copilot [options]
 Investigate a bug like an engineer: classify the failure, collect evidence,
 reproduce, rank root causes, patch, run tests, and verify — iterating when
 tests fail. \`incident\` runs the production investigator: detect, correlate
-logs/crashes/metrics, rank root cause, blast radius, regression, rollback plan,
-validate, and write the incident report.
+logs/crashes/metrics, rank root cause, blast radius, regression, rollback intelligence,
+incident timeline, autonomous response with approval gates, validate, and write the incident report.
 
 Commands:
   debug-copilot [options]     Investigate a bug
@@ -41,8 +47,9 @@ Commands:
 
 With --autonomous the agent works in an isolated git worktree: inspect,
 search, git history, reproduce, patch, re-test, inspect the diff, and revert
-if validation fails. Production code is never touched unless you also pass
---apply (promote the validated patch).
+if validation fails. Deploy, production rollback, and data mutation always
+require human approval. Production code is never touched unless you also pass
+--apply (promote a validated non-destructive patch).
 
 Options:
   --repo <path>           Repository to investigate (default: cwd)
@@ -188,6 +195,13 @@ async function main(argv: string[]): Promise<void> {
   if (report.gitInvestigation.regression) {
     process.stderr.write(`\n${renderGitRegressionAscii(report.gitInvestigation.regression)}\n`);
   }
+  if (report.gitInvestigation.firstBadVersion) {
+    process.stderr.write(`\n${report.gitInvestigation.firstBadVersion.summary}\n`);
+    process.stderr.write(`${renderFirstBadVersionAscii(report.gitInvestigation.firstBadVersion)}\n`);
+  }
+  if (report.gitInvestigation.bisect) {
+    process.stderr.write(`\n${renderGitBisectAscii(report.gitInvestigation.bisect)}\n`);
+  }
   if (report.iterations.length) {
     process.stderr.write(`\n${renderAttemptLog(report.iterations)}\n`);
   }
@@ -202,6 +216,20 @@ async function main(argv: string[]): Promise<void> {
   }
   if (report.blastRadius) {
     process.stderr.write(`\n${renderBlastRadiusAscii(report.blastRadius)}\n`);
+  }
+  if (report.fixAnalysis?.alternatives?.length) {
+    process.stderr.write(`\n${renderFixRiskAscii(report.fixAnalysis.alternatives)}\n`);
+  } else if (report.fixAnalysis?.risk) {
+    process.stderr.write(`\n${renderFixRiskAscii([report.fixAnalysis.risk])}\n`);
+  }
+  if (report.rollbackIntelligence) {
+    process.stderr.write(`\n${renderRollbackIntelligenceAscii(report.rollbackIntelligence)}\n`);
+  }
+  if (report.incidentTimeline) {
+    process.stderr.write(`\n${renderIncidentTimelineAscii(report.incidentTimeline)}\n`);
+  }
+  if (report.incidentResponse) {
+    process.stderr.write(`\n${renderIncidentResponseAscii(report.incidentResponse)}\n`);
   }
   if (report.productionInvestigation || positionals[0] === "incident") {
     process.stderr.write(`\n${renderProductionInvestigatorAscii(report.productionInvestigation)}\n`);

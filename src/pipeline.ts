@@ -6,6 +6,9 @@ import { buildBlastRadius } from "./analysis/blast-radius.js";
 import { recallIncidents, rememberIncident } from "./analysis/memory.js";
 import { mergeProductionInput } from "./analysis/production.js";
 import { detectIncident, investigateProductionIncident } from "./analysis/incident-investigator.js";
+import { buildRollbackIntelligence, canSafelyPatch } from "./analysis/rollback-intelligence.js";
+import { buildIncidentTimeline } from "./analysis/incident-timeline.js";
+import { buildIncidentResponse, looksLikeDataMutation } from "./analysis/incident-response.js";
 import { createInvestigator } from "./llm/index.js";
 import { LogAnalyzerAgent } from "./agents/log-analyzer.js";
 import { ClassifierAgent } from "./agents/classifier-agent.js";
@@ -136,6 +139,22 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   const findings = { ...specialists, dependency: dependencyAnalysis };
   evidence.specialists = findings;
 
+  if (gitInvestigation.firstBadVersion) {
+    const firstBad = gitInvestigation.firstBadVersion;
+    emit({
+      stage: "first-bad-version",
+      agent: "Git Investigator",
+      message: firstBad.summary,
+    });
+  }
+  if (gitInvestigation.bisect) {
+    emit({
+      stage: "git-bisect",
+      agent: "Git Investigator",
+      message: gitInvestigation.bisect.summary,
+    });
+  }
+
   emit({
     stage: "memory",
     message: "Search previous incidents for the same pattern...",
@@ -236,16 +255,51 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     });
     agentRuns.push(fixRun);
 
+    evidence.fixAnalysis = fixAnalysis;
+    lastFixAnalysis = fixAnalysis;
+
     let fix = fixAnalysis.proposal;
     let snapshot: Map<string, string> | undefined;
-    if (apply && investigator.name !== "cursor") {
+    const tooRisky = fixAnalysis.risk?.level === "HIGH";
+    const unsafePatch = !canSafelyPatch({
+      bug: productionHint,
+      fixAnalysis,
+      gitInvestigation,
+      causeAnalysis,
+      environment,
+      dependencyAnalysis,
+      codeInvestigation,
+    });
+    const mutating = looksLikeDataMutation(fix.edits);
+    if (apply && (tooRisky || unsafePatch || mutating)) {
+      emit({
+        stage: "fix-agent",
+        agent: "Fix Agent",
+        message: mutating
+          ? "Delete/modify data requires human approval — not applying."
+          : tooRisky
+            ? "HIGH risk patch — not applying to production. Prefer the smallest safe fix."
+            : "Cannot safely patch production. Prefer rollback, a feature flag, config, or disabling the surface.",
+      });
+      fix = {
+        ...fix,
+        applied: false,
+        applyErrors: [
+          ...fix.applyErrors,
+          mutating
+            ? "Not applied: delete/modify data requires human approval."
+            : tooRisky
+              ? "Not applied: HIGH risk. Prefer a smaller safe fix."
+              : "Not applied: cannot safely patch. Prefer rollback or a mitigation.",
+        ],
+      };
+      fixAnalysis.proposal = fix;
+    } else if (apply && investigator.name !== "cursor") {
       snapshot = await snapshotFiles(repoPath, fix.edits);
       emit({ stage: "fix", message: `Applying ${fix.edits.length} edit(s)...` });
       fix = await applyEdits(repoPath, fix);
       fixAnalysis.proposal = fix;
     }
-    evidence.fixAnalysis = fixAnalysis;
-    lastFixAnalysis = fixAnalysis;
 
     emit({
       stage: "test-agent",
@@ -338,11 +392,13 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
 
   emit({
     stage: "blast-radius",
-    message: "What else could this change break?",
+    message: "What else could this affect? Call graph, modules, features, APIs, database, users...",
   });
   const blastRadius = buildBlastRadius({
     codeInvestigation,
     affectedFiles: last.rootCause.affectedFiles,
+    changedFiles: gitInvestigation.regression?.filesChanged ?? gitInvestigation.firstBadVersion?.commits.flatMap((commit) => commit.files ?? []),
+    affectedUsers: bug.affectedUsers,
   });
   evidence.blastRadius = blastRadius;
 
@@ -380,6 +436,9 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     blastRadius,
     fixAnalysis: lastFixAnalysis,
     validation: lastValidationAnalysis,
+    causeAnalysis,
+    environment,
+    codeInvestigation,
   });
   if (productionInvestigation) {
     emit({
@@ -387,6 +446,44 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
       message: productionInvestigation.rollbackPlan.summary,
     });
     evidence.productionInvestigation = productionInvestigation;
+  }
+
+  const rollbackIntelligence =
+    productionInvestigation?.rollbackIntelligence ??
+    buildRollbackIntelligence({
+      bug: productionHint,
+      gitInvestigation,
+      blastRadius,
+      fixAnalysis: lastFixAnalysis,
+      validation: lastValidationAnalysis,
+      causeAnalysis,
+      environment,
+      dependencyAnalysis,
+      codeInvestigation,
+    });
+  evidence.rollbackIntelligence = rollbackIntelligence;
+  emit({
+    stage: "rollback-intelligence",
+    message: rollbackIntelligence.summary,
+  });
+
+  const incidentTimeline =
+    buildIncidentTimeline({
+      bug: productionHint,
+      metrics: productionInvestigation?.metrics,
+      logAnalysis,
+      gitInvestigation,
+      correlation: productionInvestigation?.correlation,
+      fixAnalysis: lastFixAnalysis,
+      validation: lastValidationAnalysis,
+    }) ?? productionInvestigation?.incidentTimeline;
+  if (incidentTimeline) {
+    evidence.incidentTimeline = incidentTimeline;
+    if (productionInvestigation) productionInvestigation.incidentTimeline = incidentTimeline;
+    emit({
+      stage: "incident-timeline",
+      message: incidentTimeline.summary,
+    });
   }
 
   emit({
@@ -411,10 +508,33 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     validationAnalysis: lastValidationAnalysis,
     memory,
     investigation: productionInvestigation,
+    rollbackIntelligence,
+    incidentTimeline,
   });
   const production = incidentReport.production;
   agentRuns.push(incidentRun);
   evidence.incidentReport = incidentReport;
+
+  const incidentResponse = buildIncidentResponse({
+    logAnalysis,
+    codeInvestigation,
+    gitInvestigation,
+    reproduction: reproductionAnalysis,
+    causeAnalysis,
+    rootCause: last.rootCause,
+    blastRadius,
+    fixAnalysis: lastFixAnalysis,
+    testAnalysis: lastTestAnalysis,
+    validation: lastValidationAnalysis,
+    rollbackIntelligence,
+    production: Boolean(productionInvestigation),
+  });
+  evidence.incidentResponse = incidentResponse;
+  if (productionInvestigation) productionInvestigation.incidentResponse = incidentResponse;
+  emit({
+    stage: "incident-response",
+    message: incidentResponse.summary,
+  });
 
   const notes: string[] = [];
   if (investigator.name === "heuristic" && last.fix.edits.length === 0) {
@@ -431,6 +551,12 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
   }
   if (environment.mismatches.length) notes.push(environment.summary);
   if (memory.matches.length) notes.push(memory.summary);
+  if (rollbackIntelligence.action !== "patch") {
+    notes.push(rollbackIntelligence.summary);
+  }
+  if (incidentResponse.waiting.length) {
+    notes.push(`Human approval required: ${incidentResponse.waiting.join(", ")}.`);
+  }
 
   const report: DebuggingReport = {
     title: `Debugging report: ${evidence.error.type ?? "Error"}: ${truncateTitle(evidence.error.message)}`,
@@ -461,6 +587,9 @@ export async function debugBug(input: BugInput, options: PipelineOptions): Promi
     blastRadius,
     memory,
     production,
+    rollbackIntelligence,
+    incidentTimeline,
+    incidentResponse,
     ...(productionInvestigation ? { productionInvestigation } : {}),
   };
 

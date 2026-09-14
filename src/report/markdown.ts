@@ -4,7 +4,13 @@ import { renderEnvironmentAscii } from "../collectors/runtime.js";
 import { renderProductionIncidentAscii } from "../analysis/production.js";
 import { renderProductionInvestigatorAscii } from "../analysis/incident-investigator.js";
 import { renderBlastRadiusAscii } from "../analysis/blast-radius.js";
+import { renderFixRiskAscii } from "../analysis/fix-risk.js";
+import { renderRollbackIntelligenceAscii } from "../analysis/rollback-intelligence.js";
+import { renderIncidentTimelineAscii } from "../analysis/incident-timeline.js";
+import { renderIncidentResponseAscii } from "../analysis/incident-response.js";
 import { renderMemoryAscii } from "../analysis/memory.js";
+import { renderFirstBadVersionAscii } from "../analysis/first-bad-version.js";
+import { renderGitBisectAscii } from "../analysis/git-bisect.js";
 import type { DebuggingReport } from "../types.js";
 
 export function renderMarkdownReport(report: DebuggingReport): string {
@@ -102,6 +108,18 @@ export function renderMarkdownReport(report: DebuggingReport): string {
       ? `## Blast radius\n\n${renderBlastRadiusAscii(report.blastRadius)}`
       : "",
     "",
+    report.rollbackIntelligence
+      ? `## Rollback intelligence\n\n${renderRollbackIntelligenceAscii(report.rollbackIntelligence)}`
+      : "",
+    "",
+    report.incidentTimeline
+      ? `## Incident timeline\n\n${renderIncidentTimelineAscii(report.incidentTimeline)}`
+      : "",
+    "",
+    report.incidentResponse
+      ? `## Autonomous incident response\n\n${renderIncidentResponseAscii(report.incidentResponse)}`
+      : "",
+    "",
     report.memory ? `## Debugging memory\n\n${renderMemoryAscii(report.memory)}` : "",
     "",
     report.productionInvestigation
@@ -170,6 +188,12 @@ export function renderMarkdownReport(report: DebuggingReport): string {
           "## Git Investigator",
           "",
           report.gitInvestigation.summary,
+          report.gitInvestigation.firstBadVersion
+            ? `\n\`\`\`\n${renderFirstBadVersionAscii(report.gitInvestigation.firstBadVersion)}\n\`\`\``
+            : "",
+          report.gitInvestigation.bisect
+            ? `\n\`\`\`\n${renderGitBisectAscii(report.gitInvestigation.bisect)}\n\`\`\``
+            : "",
           report.gitInvestigation.regression
             ? [
                 "",
@@ -309,6 +333,11 @@ export function renderMarkdownReport(report: DebuggingReport): string {
           "",
           report.fixAnalysis.summary,
           `\nStrategy: \`${report.fixAnalysis.strategy}\` (${report.fixAnalysis.source})`,
+          report.fixAnalysis.alternatives?.length
+            ? `\n\`\`\`\n${renderFixRiskAscii(report.fixAnalysis.alternatives)}\n\`\`\``
+            : report.fixAnalysis.risk
+              ? `\n\`\`\`\n${renderFixRiskAscii([report.fixAnalysis.risk])}\n\`\`\``
+              : "",
           report.fixAnalysis.proposal.edits.length
             ? `\nEdits:\n${report.fixAnalysis.proposal.edits
                 .map((edit) => `- \`${edit.path}\`\n\`\`\`diff\n- ${oneLine(edit.oldString)}\n+ ${oneLine(edit.newString)}\n\`\`\``)

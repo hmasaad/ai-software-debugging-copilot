@@ -1,5 +1,12 @@
 import type { BugInput, EvidenceBundle, ReproductionResult } from "../types.js";
 import { truncate } from "../exec.js";
+import { renderFirstBadVersionAscii } from "../analysis/first-bad-version.js";
+import { renderGitBisectAscii } from "../analysis/git-bisect.js";
+import { renderBlastRadiusAscii } from "../analysis/blast-radius.js";
+import { renderFixRiskAscii } from "../analysis/fix-risk.js";
+import { renderRollbackIntelligenceAscii } from "../analysis/rollback-intelligence.js";
+import { renderIncidentTimelineAscii } from "../analysis/incident-timeline.js";
+import { renderIncidentResponseAscii } from "../analysis/incident-response.js";
 
 export function buildEvidenceBrief(
   input: BugInput,
@@ -107,6 +114,10 @@ export function buildEvidenceBrief(
       "",
       `## Git Investigator`,
       evidence.gitInvestigation?.summary ?? "",
+      evidence.gitInvestigation?.firstBadVersion
+        ? renderFirstBadVersionAscii(evidence.gitInvestigation.firstBadVersion)
+        : "",
+      evidence.gitInvestigation?.bisect ? renderGitBisectAscii(evidence.gitInvestigation.bisect) : "",
       evidence.gitInvestigation?.regression
         ? [
             "Likely introduced by:",
@@ -199,16 +210,24 @@ export function buildEvidenceBrief(
       evidence.blastRadius
         ? [
             evidence.blastRadius.question,
+            renderBlastRadiusAscii(evidence.blastRadius),
             `Origin: ${evidence.blastRadius.origin}`,
             evidence.blastRadius.usedBy.length
-              ? `Used by:\n${evidence.blastRadius.usedBy.map((node) => `- ${node.name}`).join("\n")}`
+              ? `Call graph:\n${evidence.blastRadius.usedBy.map((node) => `- ${node.name}`).join("\n")}`
               : "",
-            evidence.blastRadius.high.length ? `HIGH:\n${evidence.blastRadius.high.map((name) => `- ${name}`).join("\n")}` : "",
-            evidence.blastRadius.low.length ? `LOW:\n${evidence.blastRadius.low.map((name) => `- ${name}`).join("\n")}` : "",
           ]
             .filter(Boolean)
             .join("\n")
         : "",
+      "",
+      `## Rollback intelligence`,
+      evidence.rollbackIntelligence ? renderRollbackIntelligenceAscii(evidence.rollbackIntelligence) : "",
+      "",
+      `## Incident timeline`,
+      evidence.incidentTimeline ? renderIncidentTimelineAscii(evidence.incidentTimeline) : "",
+      "",
+      `## Autonomous incident response`,
+      evidence.incidentResponse ? renderIncidentResponseAscii(evidence.incidentResponse) : "",
       "",
       `## Debugging memory`,
       evidence.memory
@@ -230,6 +249,11 @@ export function buildEvidenceBrief(
       `## Fix Agent`,
       evidence.fixAnalysis?.summary ?? "",
       evidence.fixAnalysis ? `Strategy: ${evidence.fixAnalysis.strategy} (${evidence.fixAnalysis.source})` : "",
+      evidence.fixAnalysis?.alternatives?.length
+        ? renderFixRiskAscii(evidence.fixAnalysis.alternatives)
+        : evidence.fixAnalysis?.risk
+          ? renderFixRiskAscii([evidence.fixAnalysis.risk])
+          : "",
       evidence.fixAnalysis?.proposal.edits.length
         ? `Edits:\n${evidence.fixAnalysis.proposal.edits
             .map((edit) => `- ${edit.path}: ${edit.oldString} → ${edit.newString}`)
@@ -289,6 +313,12 @@ export function buildEvidenceBrief(
               .map((event) => `- ${event.label}: ${event.detail}`),
             evidence.productionInvestigation.rollbackPlan.summary,
             ...evidence.productionInvestigation.rollbackPlan.steps.map((step, index) => `${index + 1}. ${step}`),
+            evidence.productionInvestigation.firstBadVersion
+              ? renderFirstBadVersionAscii(evidence.productionInvestigation.firstBadVersion)
+              : "",
+            evidence.productionInvestigation.incidentTimeline
+              ? renderIncidentTimelineAscii(evidence.productionInvestigation.incidentTimeline)
+              : "",
           ].join("\n")
         : "",
       "",
@@ -359,6 +389,8 @@ Return ONLY valid JSON with this shape:
 confidence and likelihood are numbers between 0 and 1.
 Prefer project frames over framework/library frames.
 Recent git blame + failing tests that overlap a stack frame are strong evidence.
+If Git Investigator names a first bad version, inspect that version window (last healthy → first crashing) before treating later crashing versions as independent bugs.
+If Git Investigator isolated a commit via git bisect, treat that as the introducing change unless later evidence contradicts it.
 If Git Investigator names an introducing commit, treat that as historical context, not proof by itself.
 If Dependency Analyst marks a likely dependency bug, prefer install/version hypotheses over application-code patches.
 Start from Root Cause Agent's ranked causes and only reorder them when new evidence in this brief contradicts them.
@@ -382,6 +414,8 @@ Rules:
 - Prefer the smallest correct change.
 - Do not change unrelated files.
 - Fix Agent will apply this as a minimal patch; keep edits to the crash expression when possible.
+Prefer the smallest safe fix. Do not apply HIGH-risk multi-file patches to production code.
+If a code patch is not safe, prefer rollback, then a feature flag, then a configuration change, then disabling the affected functionality.
 - Do not include markdown fences in JSON strings unless they already exist in the source.
 - If you cannot produce a safe edit, return an empty edits array and explain in summary.`;
 }

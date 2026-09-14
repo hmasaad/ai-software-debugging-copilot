@@ -113,11 +113,17 @@ describe("production incident investigator", () => {
       bug,
       gitInvestigation: git,
       blastRadius: {
-        question: "What else could this change break?",
+        question: "What else could this affect?",
         origin: "FirebaseBoot",
         usedBy: [],
         high: ["Savings screen"],
         low: ["Media screen"],
+        direct: ["Savings screen"],
+        indirect: ["Savings reports", "Shareout", "Member details"],
+        severity: "HIGH",
+        workflowShare: 0.32,
+        workflowLabel: "Savings workflows",
+        layers: [],
         summary: "HIGH Savings screen",
       },
     });
@@ -139,7 +145,27 @@ describe("production incident investigator", () => {
     expect(ascii).toContain("Crash spike");
     expect(ascii).toContain("Potential incident");
     expect(ascii).toContain("Fix / Rollback Plan");
+    expect(ascii).toContain("Can safely patch?");
+    expect(ascii).toContain("Recommended: Rollback");
+    expect(ascii).toContain("First customer impact detected");
     expect(ascii).not.toContain("Logs ─────────┐");
+  });
+
+  it("uses the last healthy version as the rollback target", () => {
+    const bug = {
+      repoPath: "/tmp",
+      version: "1.0.182",
+      affectedUsers: 327,
+      extraContext: ["v1.0.180 → healthy", "v1.0.181 → crashes", "v1.0.182 → crashes"].join("\n"),
+    };
+    const plan = buildRollbackPlan({ bug, gitInvestigation: git });
+    expect(plan.target).toBe("1.0.180");
+
+    const investigation = investigateProductionIncident({ bug, logAnalysis: logs, gitInvestigation: git });
+    expect(investigation?.firstBadVersion?.firstBad).toBe("1.0.181");
+    expect(investigation?.firstBadVersion?.lastHealthy).toBe("1.0.180");
+    expect(renderProductionInvestigatorAscii(investigation)).toContain("Crash begins");
+    expect(renderProductionInvestigatorAscii(investigation)).toContain("v1.0.181");
   });
 
   it("lets Incident Agent include correlation and the rollback plan", async () => {
@@ -169,6 +195,8 @@ describe("production incident investigator", () => {
     });
     expect(result.body).toContain("### Correlation");
     expect(result.body).toContain("### Fix / Rollback Plan");
+    expect(result.body).toContain("### Rollback Intelligence");
+    expect(result.body).toContain("### Incident Timeline");
     expect(result.timeline.some((event) => event.label === "Correlated")).toBe(true);
   });
 });

@@ -20,6 +20,8 @@ import type {
   NetworkAnalysis,
   ProductionInvestigation,
   ReproductionAnalysis,
+  RollbackIntelligence,
+  IncidentTimeline,
   RootCauseAnalysis,
   SpecialistFindings,
   TestAnalysis,
@@ -45,6 +47,8 @@ export interface AgentContext {
   specialists?: SpecialistFindings;
   memory?: DebuggingMemory;
   investigation?: ProductionInvestigation;
+  rollbackIntelligence?: RollbackIntelligence;
+  incidentTimeline?: IncidentTimeline;
   investigator?: Investigator;
   runTests?: boolean;
   apply?: boolean;
